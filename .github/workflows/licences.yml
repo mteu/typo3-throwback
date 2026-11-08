@@ -1,0 +1,44 @@
+# Re-derives the licence inventory of every image from the vendored archives and
+# fails if it differs from the committed one.
+#
+# php4-base/NOTICES.txt and each stack's LICENCES.md are copied into their
+# images, so what an image says about its licences is only as good as these
+# files. .github/scripts/licence_inventory.py derives them from the archives in
+# vendor-src/ and from the configure flags in php4-base/Dockerfile. A configure
+# flag the script does not know fails the job, so an extension cannot be compiled
+# into PHP 4 without its notices. On a difference the job prints a diff; the fix
+# is to run the script with `write` and commit what it produces.
+#
+# Nothing here needs the network or a token: the archives are in the checkout.
+
+name: licences
+
+on:
+  push:
+    paths:
+      - 'vendor-src/**/*.tar.gz'
+      - 'php4-base/Dockerfile'
+      - 'php4-base/NOTICES.txt'
+      - '*/LICENCES.md'
+      - '.github/scripts/licence_inventory.py'
+      - '.github/scripts/test_licence_inventory.py'
+      - '.github/workflows/licences.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  inventory:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Unit tests
+        run: python3 -m unittest discover -s .github/scripts -p 'test_licence_inventory.py' -v
+
+      - name: Compare the committed inventory with the archives
+        run: python3 .github/scripts/licence_inventory.py check

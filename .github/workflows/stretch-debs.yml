@@ -1,0 +1,79 @@
+# Re-derives each stretch image's package lock from Debian's signed archive and
+# fails if it differs from the committed one.
+#
+# The four stretch Dockerfiles (3.8, 4.0, 4.5, 6.2) install nothing but the files
+# their stretch-debs.lock names, each checked by SHA-256. That is only as good as
+# the lock, so this is where the lock is earned: .github/scripts/lock-stretch-debs.sh
+# resolves the package list inside the pinned base image, then checks every file
+# against Release's signature, Packages.gz against Release, and each .deb against
+# Packages.gz. On a difference the job prints the lock it derived, which is the
+# file to commit after reading why it changed.
+#
+# Monthly as well, for the same reason images.yml runs monthly: an archived suite
+# can be pruned without a file here changing, and that should be a failing job,
+# not a broken build someone finds later.
+
+name: stretch-debs
+
+on:
+  push:
+    paths:
+      - '3.8/stretch-debs.lock'
+      - '4.0/stretch-debs.lock'
+      - '4.5/stretch-debs.lock'
+      - '6.2/stretch-debs.lock'
+      - '.github/scripts/lock-stretch-debs.sh'
+      - '.github/workflows/stretch-debs.yml'
+  schedule:
+    - cron: '23 5 9 * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  lock:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        stack: ['3.8', '4.0', '4.5', '6.2']
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # The digest every stretch Dockerfile starts from. The mirror first, as in
+      # images.yml, and Docker Hub if the mirror has not been filled yet.
+      - name: Pull the base image
+        run: |
+          digest=sha256:0a40fd273961b99d8afe69a61a68c73c04bc0caa9de384d3b2dd9e7986eec86d
+          grep -q "php@$digest" "${{ matrix.stack }}/Dockerfile" \
+            || { echo "::error::${{ matrix.stack }}/Dockerfile no longer starts from php@$digest; update this workflow with it"; exit 1; }
+          if docker pull --platform linux/amd64 "ghcr.io/${GITHUB_REPOSITORY}/php@$digest" >/dev/null; then
+            echo "BASE=ghcr.io/${GITHUB_REPOSITORY}/php@$digest" >> "$GITHUB_ENV"
+          else
+            docker pull --platform linux/amd64 "docker.io/library/php@$digest" >/dev/null
+            echo "BASE=docker.io/library/php@$digest" >> "$GITHUB_ENV"
+          fi
+
+      - name: Derive the lock and compare
+        run: |
+          set -euo pipefail
+          lock="${{ matrix.stack }}/stretch-debs.lock"
+          docker run --rm --platform linux/amd64 -v "$PWD:/w:ro" -w /w "$BASE" \
+            bash .github/scripts/lock-stretch-debs.sh "$lock" > derived
+          echo "derived $(wc -l < derived) packages"
+          if ! diff <(grep -v '^#' "$lock") derived; then
+            echo "::error::$lock differs from what the signed archive gives. The derived lock:"
+            grep '^#' "$lock"
+            cat derived
+            exit 1
+          fi
+          echo "$lock matches the signed archive"

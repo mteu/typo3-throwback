@@ -1,0 +1,56 @@
+typo3-throwback
+
+The files this project wrote are licensed under the MIT licence (see LICENSE).
+The material below is not covered by it. Each part keeps its own licence.
+
+Source archives in vendor-src/
+
+  TYPO3 3.3.0, 3.8.1, 4.0.13, 4.5.40 and 6.2.31
+    GPL-2.0-or-later. Each archive carries the GPL text and a LICENSE.txt.
+    In 3.3.0 they sit in typo3/, t3lib/ and tslib/. In 6.2.31 the LICENSE.txt
+    also names the Silk icon set (Mark James), which is Creative Commons
+    Attribution 2.5.
+    "TYPO3" is a registered trademark of the TYPO3 Association. This project
+    is not affiliated with or endorsed by it.
+
+  PHP 4.4.9
+    PHP License 3.01, with the Zend Engine under the Zend Engine License
+    2.00. The archive carries both. The php4-base image compiles it, and
+    php4-base/NOTICES.txt carries every licence and copyright notice of the
+    compiled parts. The image has it at /usr/share/doc/php-4.4.9/NOTICES.txt.
+
+    This product includes PHP software, freely available from
+    <http://www.php.net/software/>.
+
+    This product includes the Zend Engine, freely available at
+    http://www.zend.com
+
+  Libraries bundled in the TYPO3 archives
+    Each under its own licence, shipped with its source in the archive and,
+    unmodified, in the image. Each stack's LICENCES.md lists the licence
+    files its release bundles, for example 6.2/LICENCES.md. The image has
+    it at /usr/share/doc/typo3-<version>/LICENCES.md.
+
+  Both inventories are generated from the archives by
+  .github/scripts/licence_inventory.py, and CI fails when they are stale.
+
+Images this project copies unchanged into ghcr.io/mteu/typo3-throwback/
+
+  mysql (5.5), nginx (1.27.5), debian (bullseye, bullseye-slim) and
+  php (5.6-apache) are copies of the upstream Docker Official Images, pinned
+  by digest. Their contents carry their upstream licences, for example
+  GPL-2.0 for MySQL Community Server and for many Debian packages, and the
+  PHP License for PHP. The upstream projects publish the source. For Debian
+  packages it is on archive.debian.org and snapshot.debian.org.
+
+Packages the builds install
+
+  The typo3 and php4-base images add Debian packages, such as libfaketime,
+  ImageMagick and the gd development files. Each stays under its Debian
+  licence. Debian publishes the source of every package.
+
+The TYPO3 mark in README.md
+
+  The mark at the top of README.md is the logo as it shipped in the TYPO3
+  3.3.0 release archive. It is a trademark of the TYPO3 Association and is
+  not covered by the MIT licence.

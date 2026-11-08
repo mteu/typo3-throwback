@@ -1,0 +1,1687 @@
+# Builds the TYPO3 images, proves each one boots to a working site, and only then
+# publishes it to this repository's GHCR namespace — so the PHP 4 compile
+# happens once here rather than on every machine that wants to run a stack.
+#
+# The smoke tests between building and pushing are the point of this workflow as
+# much as the images are: they mean "it runs" in README.md is a claim CI keeps
+# honest.
+#
+# Publishing rules, because these images are meant to be pulled by strangers:
+#
+#   * The moving tags (typo3:3.3.0, typo3:3.8.1, php4-base:4.4.9) move only from
+#     the default branch. A branch build is tested in full and publishes nothing
+#     anyone's compose file points at.
+#   * A branch build that rebuilt php4-base still has to push it — under an
+#     immutable sha- tag — because buildx's docker-container driver resolves
+#     `FROM` against the registry, not the runner's image store. 3.3 is then
+#     built against that sha- tag through its BASE_IMAGE build arg.
+#   * The monthly build publishes nothing at all. It exists to prove the Debian
+#     sources still resolve; republishing an identical image on a timer would
+#     only churn digests people pin.
+#
+# What runs, and what publishes, are decided by two different sets of files:
+#
+#   * An image's inputs are the files its Dockerfile COPYs, the Dockerfile itself,
+#     and the vendored tarball. Change one and the image is rebuilt, tested and
+#     published.
+#   * A stack's inputs are those plus the compose file and this workflow. Change
+#     only the compose file or this file and the stack is tested again, against a
+#     build that is served from cache, and nothing is pushed. The image is the same
+#     image; republishing it would only move the tag to a new digest.
+#
+# Everything else — README, docs/, PROVENANCE.md, the checksum files, the mirror
+# workflow — starts no run at all. The trigger below is an allowlist of exactly
+# those files, so a new file somewhere else is ignored until it is added here.
+# That is deliberate: the failure is a missed rebuild, which the monthly run and
+# `force` catch, rather than a silent rebuild on every typo fix.
+#
+# 3.8, 4.0, 4.5 and 6.2 start from an official php:5.6-apache digest, so they
+# neither wait for php4-base nor are invalidated by it.
+#
+# .github/scripts/ci-assert.sh and the ci-* files in a version's directory are
+# the tests' helpers, not image inputs, so they count as stack files.
+
+name: images
+
+on:
+  push:
+    paths:
+      # php4-base
+      - 'php4-base/Dockerfile'
+      - 'php4-base/nginx.conf'
+      - 'php4-base/php-legacy.ini'
+      - 'php4-base/NOTICES.txt'
+      - 'vendor-src/php-4.4.9/php-4.4.9.tar.gz'
+      # 3.3
+      - '3.3/Dockerfile'
+      - '3.3/LICENCES.md'
+      - '3.3/entrypoint.sh'
+      - '3.3/provision.php'
+      - '3.3/compose.yaml'
+      - 'vendor-src/typo3-3.3.0/typo3_src-3.3.0.tar.gz'
+      # 3.8
+      - '3.8/Dockerfile'
+      - '3.8/LICENCES.md'
+      - '3.8/stretch-debs.lock'
+      - '3.8/entrypoint.sh'
+      - '3.8/provision.php'
+      - '3.8/php-legacy.ini'
+      - '3.8/apache-typo3.conf'
+      - '3.8/compose.yaml'
+      - 'vendor-src/typo3-3.8.1/typo3_src-3.8.1.tar.gz'
+      # 4.0
+      - '4.0/Dockerfile'
+      - '4.0/LICENCES.md'
+      - '4.0/stretch-debs.lock'
+      - '4.0/entrypoint.sh'
+      - '4.0/provision.php'
+      - '4.0/php-legacy.ini'
+      - '4.0/apache-typo3.conf'
+      - '4.0/compose.yaml'
+      - '.github/scripts/ci-backend-session.sh'
+      - '4.0/ci-php-control.sh'
+      - '4.0/ci-probe.py'
+      - 'vendor-src/typo3-4.0.13/typo3_src-4.0.13.tar.gz'
+      # 4.5
+      - '4.5/Dockerfile'
+      - '4.5/LICENCES.md'
+      - '4.5/stretch-debs.lock'
+      - '4.5/entrypoint.sh'
+      - '4.5/provision.php'
+      - '4.5/php-legacy.ini'
+      - '4.5/apache-typo3.conf'
+      - '4.5/compose.yaml'
+      - '4.5/ci-login.sh'
+      - '4.5/ci-extdirect.sh'
+      - '4.5/ci-check-page-tree.py'
+      - 'vendor-src/typo3-4.5.40/typo3_src-4.5.40.tar.gz'
+      # 6.2
+      - '6.2/Dockerfile'
+      - '6.2/LICENCES.md'
+      - '6.2/stretch-debs.lock'
+      - '6.2/entrypoint.sh'
+      - '6.2/install.php'
+      - '6.2/provision.php'
+      - '6.2/php-legacy.ini'
+      - '6.2/apache-typo3.conf'
+      - '6.2/compose.yaml'
+      - '6.2/ci-login.sh'
+      - '6.2/ci-extdirect.sh'
+      - '6.2/ci-check-page-tree.py'
+      - '6.2/ci-rsa.py'
+      - 'vendor-src/typo3-6.2.31/typo3_src-6.2.31.tar.gz'
+      - '.github/scripts/ci-assert.sh'
+      - '.github/workflows/images.yml'
+  # Monthly, an hour after the image mirror. These builds install Debian packages
+  # from archived suites, and a suite that is pruned breaks them without a single
+  # file here changing. A scheduled build turns that into a failing job instead of
+  # a surprise.
+  schedule:
+    - cron: '17 5 1 * *'
+  workflow_dispatch:
+    inputs:
+      force:
+        description: 'Rebuild every image even if nothing changed'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: images-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  BASE_IMAGE: ghcr.io/${{ github.repository }}/php4-base
+  TYPO3_IMAGE: ghcr.io/${{ github.repository }}/typo3
+  # 'true' only for a push or dispatch on the default branch.
+  PUBLISH: ${{ github.event_name != 'schedule' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
+  # TYPO3 3.3 sniffs the User-Agent and refuses anything it does not recognise as
+  # a "4+ browser", curl included.
+  UA: 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36'
+
+jobs:
+  # The trigger is wide enough to start a run for any one image's files, so this
+  # is a real second gate rather than a restatement of it: a push that touched
+  # only 3.8 must not rebuild 3.3.
+  #
+  # `image_*` are the files an image is built from. `stack_*` are the files a
+  # stack is tested with but that are not in the image. A scheduled or forced run
+  # sets every image_* output, and the publish steps below separately refuse to
+  # run on a schedule.
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      php4_base: ${{ steps.filter.outputs.php4_base == 'true' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' && inputs.force }}
+      image_3_3: ${{ steps.filter.outputs.image_3_3 == 'true' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' && inputs.force }}
+      image_3_8: ${{ steps.filter.outputs.image_3_8 == 'true' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' && inputs.force }}
+      image_4_0: ${{ steps.filter.outputs.image_4_0 == 'true' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' && inputs.force }}
+      image_4_5: ${{ steps.filter.outputs.image_4_5 == 'true' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' && inputs.force }}
+      image_6_2: ${{ steps.filter.outputs.image_6_2 == 'true' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' && inputs.force }}
+      stack_3_3: ${{ steps.filter.outputs.stack_3_3 == 'true' }}
+      stack_3_8: ${{ steps.filter.outputs.stack_3_8 == 'true' }}
+      stack_4_0: ${{ steps.filter.outputs.stack_4_0 == 'true' }}
+      stack_4_5: ${{ steps.filter.outputs.stack_4_5 == 'true' }}
+      stack_6_2: ${{ steps.filter.outputs.stack_6_2 == 'true' }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 2
+
+      - uses: dorny/paths-filter@v4
+        id: filter
+        with:
+          # Without this, a push to anything but the default branch is compared
+          # against the default branch, so every push re-detects everything the
+          # branch has ever changed. Naming the pushed branch makes it compare
+          # against the commit before the push. A branch's first push has no such
+          # commit, and the action then falls back to the default branch.
+          base: ${{ github.ref_name }}
+          filters: |
+            php4_base:
+              - 'php4-base/Dockerfile'
+              - 'php4-base/nginx.conf'
+              - 'php4-base/php-legacy.ini'
+              - 'php4-base/NOTICES.txt'
+              - 'vendor-src/php-4.4.9/php-4.4.9.tar.gz'
+            image_3_3:
+              - '3.3/Dockerfile'
+              - '3.3/LICENCES.md'
+              - '3.3/entrypoint.sh'
+              - '3.3/provision.php'
+              - 'vendor-src/typo3-3.3.0/typo3_src-3.3.0.tar.gz'
+            image_3_8:
+              - '3.8/Dockerfile'
+              - '3.8/LICENCES.md'
+              - '3.8/stretch-debs.lock'
+              - '3.8/entrypoint.sh'
+              - '3.8/provision.php'
+              - '3.8/php-legacy.ini'
+              - '3.8/apache-typo3.conf'
+              - 'vendor-src/typo3-3.8.1/typo3_src-3.8.1.tar.gz'
+            image_4_0:
+              - '4.0/Dockerfile'
+              - '4.0/LICENCES.md'
+              - '4.0/stretch-debs.lock'
+              - '4.0/entrypoint.sh'
+              - '4.0/provision.php'
+              - '4.0/php-legacy.ini'
+              - '4.0/apache-typo3.conf'
+              - 'vendor-src/typo3-4.0.13/typo3_src-4.0.13.tar.gz'
+            image_4_5:
+              - '4.5/Dockerfile'
+              - '4.5/LICENCES.md'
+              - '4.5/stretch-debs.lock'
+              - '4.5/entrypoint.sh'
+              - '4.5/provision.php'
+              - '4.5/php-legacy.ini'
+              - '4.5/apache-typo3.conf'
+              - 'vendor-src/typo3-4.5.40/typo3_src-4.5.40.tar.gz'
+            image_6_2:
+              - '6.2/Dockerfile'
+              - '6.2/LICENCES.md'
+              - '6.2/stretch-debs.lock'
+              - '6.2/entrypoint.sh'
+              - '6.2/install.php'
+              - '6.2/provision.php'
+              - '6.2/php-legacy.ini'
+              - '6.2/apache-typo3.conf'
+              - 'vendor-src/typo3-6.2.31/typo3_src-6.2.31.tar.gz'
+            stack_3_3:
+              - '3.3/compose.yaml'
+              - '.github/scripts/ci-assert.sh'
+              - '.github/scripts/ci-backend-session.sh'
+              - '.github/workflows/images.yml'
+            stack_3_8:
+              - '3.8/compose.yaml'
+              - '.github/scripts/ci-assert.sh'
+              - '.github/scripts/ci-backend-session.sh'
+              - '.github/workflows/images.yml'
+            stack_4_0:
+              - '4.0/compose.yaml'
+              - '.github/scripts/ci-backend-session.sh'
+              - '4.0/ci-php-control.sh'
+              - '4.0/ci-probe.py'
+              - '.github/scripts/ci-assert.sh'
+              - '.github/workflows/images.yml'
+            stack_4_5:
+              - '4.5/compose.yaml'
+              - '4.5/ci-login.sh'
+              - '4.5/ci-extdirect.sh'
+              - '4.5/ci-check-page-tree.py'
+              - '.github/scripts/ci-assert.sh'
+              - '.github/workflows/images.yml'
+            stack_6_2:
+              - '6.2/compose.yaml'
+              - '6.2/ci-login.sh'
+              - '6.2/ci-extdirect.sh'
+              - '6.2/ci-check-page-tree.py'
+              - '6.2/ci-rsa.py'
+              - '.github/scripts/ci-assert.sh'
+              - '.github/workflows/images.yml'
+
+  php4-base:
+    needs: changes
+    if: needs.changes.outputs.php4_base == 'true'
+    runs-on: ubuntu-latest
+    outputs:
+      # What 3.3 should build FROM: this run's immutable tag when it was pushed,
+      # otherwise the published one.
+      ref: ${{ steps.ref.outputs.ref }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Choose tags
+        id: tags
+        run: |
+          {
+            echo 'tags<<EOF'
+            echo "${BASE_IMAGE}:sha-${GITHUB_SHA}"
+            if [ "$PUBLISH" = true ]; then echo "${BASE_IMAGE}:4.4.9"; fi
+            echo EOF
+          } >> "$GITHUB_OUTPUT"
+
+      # The expensive one — compiling PHP 4.4.9 from source. Context is the
+      # repository root because the PHP tarball is vendored in vendor-src/.
+      - name: Build php4-base
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: php4-base/Dockerfile
+          push: ${{ github.event_name != 'schedule' }}
+          tags: ${{ steps.tags.outputs.tags }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.description=PHP 4.4.9 with nginx and FastCGI, the runtime for TYPO3 releases that predate PHP 5.
+            org.opencontainers.image.licenses=PHP-3.01
+          cache-from: type=gha,scope=php4-base
+          cache-to: type=gha,mode=max,scope=php4-base
+
+      - name: Hand the base to the 3.3 job
+        id: ref
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = schedule ]; then
+            echo "ref=${BASE_IMAGE}:4.4.9" >> "$GITHUB_OUTPUT"
+          else
+            echo "ref=${BASE_IMAGE}:sha-${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+          fi
+
+  typo3-3-3:
+    needs: [changes, php4-base]
+    # Runs if 3.3's image inputs changed, or if php4-base was rebuilt — a new base
+    # needs the whole stack re-verified against it, not just re-tagged — or if only
+    # the compose file or this workflow changed, in which case it tests and does
+    # not publish. always() because a skipped php4-base would otherwise fail this
+    # job's `needs`.
+    if: |
+      always() &&
+      (needs.changes.outputs.image_3_3 == 'true' || needs.changes.outputs.php4_base == 'true' || needs.changes.outputs.stack_3_3 == 'true') &&
+      (needs.php4-base.result == 'success' || needs.php4-base.result == 'skipped')
+    runs-on: ubuntu-latest
+    # amd64 only: mysql:5.5 was never published for arm64, so there is nothing to
+    # gain from a matrix.
+    env:
+      COMPOSE_FILE: 3.3/compose.yaml
+      BASE_REF: ${{ needs.php4-base.outputs.ref || format('ghcr.io/{0}/php4-base:4.4.9', github.repository) }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Loaded into the runner's image store rather than pushed, so the smoke
+      # test runs against the exact image that would be published.
+      - name: Build typo3:3.3.0
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: 3.3/Dockerfile
+          build-args: BASE_IMAGE=${{ env.BASE_REF }}
+          load: true
+          tags: |
+            ${{ env.TYPO3_IMAGE }}:3.3.0
+            ${{ env.TYPO3_IMAGE }}:3.3.0-sha-${{ github.sha }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.description=TYPO3 3.3.0 (2002) on PHP 4.4.9. Loopback use only: the core has known, unpatched RCE issues.
+            org.opencontainers.image.licenses=GPL-2.0-or-later
+            org.opencontainers.image.version=3.3.0
+          cache-from: type=gha,scope=typo3-3.3
+          cache-to: type=gha,mode=max,scope=typo3-3.3
+
+      # The mirror is filled by its own workflow, which on a fresh fork runs at the
+      # same time as this one. Falling back keeps that first run meaningful; the
+      # mirror workflow is what proves the mirror.
+      - name: Choose where mysql and nginx come from
+        run: |
+          if docker pull --platform linux/amd64 \
+               "ghcr.io/${GITHUB_REPOSITORY}/mysql@sha256:12da85ab88aedfdf39455872fb044f607c32fdc233cd59f1d26769fbf439b045" >/dev/null; then
+            echo "THROWBACK_MIRROR=ghcr.io/${GITHUB_REPOSITORY}" >> "$GITHUB_ENV"
+          else
+            echo "::warning::GHCR mirror not populated yet; smoke-testing against Docker Hub. Run the mirror workflow."
+            echo "THROWBACK_MIRROR=docker.io/library" >> "$GITHUB_ENV"
+          fi
+
+      # pull_policy: missing finds the image in the local store and leaves the
+      # registry alone.
+      - name: Start the stack
+        run: docker compose up -d --no-build
+
+      - name: Wait for the frontend
+        run: |
+          for i in $(seq 1 60); do
+            if curl -fsS --max-time 5 http://127.0.0.1:8033/ >/dev/null 2>&1; then
+              echo "frontend responding after ${i} attempt(s)"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "::error::frontend never came up"
+          docker compose logs
+          exit 1
+
+      - name: Smoke test
+        run: |
+          set -euo pipefail
+
+          . .github/scripts/ci-assert.sh
+
+          curl -fsS -A "$UA" http://127.0.0.1:8033/ -o fe.html
+          # The root template includes "template; GREEN", and this is its page
+          # title: the seeded page's title in GREEN's own titleWrap constant.
+          # TEMPLATE substitutes its markers only once it has read
+          # media/uploads/green/template.tmpl (class.tslib_content.php:1580), so
+          # this line proves the static template resolved, its constants were
+          # applied, and the media/ link in the document root works. Without that
+          # link the body is empty and nothing is logged anywhere.
+          grep -qF '<font face="verdana" color="white"><b>TYPO3 3.3.0</b></font>' fe.html
+          grep -q 'Rendered by TypoScript on PHP 4.4.9' fe.html
+          # The clock: the release day, within its first hour. It starts at noon
+          # and runs (3.3/compose.yaml), so the minutes and seconds are however
+          # long the stack took to answer. A regression in libfaketime must still
+          # fail the build.
+          grep -Eq 'Page generated&nbsp;2002-06-03 12:[0-9]{2}:[0-9]{2}' fe.html
+
+          # Every image the page names has to answer: GREEN's logo and top image
+          # (served from media/, or processed into typo3temp/), its background,
+          # and the clear.gif spacer the 2002 frontend always expects at the site
+          # root. A missing one is a broken image on the page, which no grep of
+          # the HTML would notice.
+          refs="$(grep -oiE '(src|background)="[^"]+"' fe.html | sed -E 's/^[^"]*"//; s/"$//' | sort -u)"
+          test -n "$refs"
+          grep -qx 'clear.gif' <<<"$refs"
+          for ref in $refs; do
+            case "$ref" in http:*|https:*|//*) echo "::error::off-site image reference: $ref"; exit 1 ;; esac
+            curl -fsS -o /dev/null -A "$UA" "http://127.0.0.1:8033/${ref#/}" \
+              || { echo "::error::the frontend references $ref and it does not load"; exit 1; }
+          done
+          echo "all $(echo "$refs" | wc -l) image references load"
+
+          curl -fsS -A "$UA" http://127.0.0.1:8033/typo3/index.php -o be.html
+          # Challenge-response login form, which only renders once PATH_site
+          # resolved correctly.
+          grep -q 'name="userident"' be.html
+          # The PATH_TRANSLATED regression signature: a broken stack serves a
+          # phpinfo() dump here instead of the login form.
+          refute_in be.html -i 'sitepath not specified'
+
+          curl -fsS -A "$UA" http://127.0.0.1:8033/typo3/install/index.php -o it.html
+          grep -q '<title>Typo3 Install Tool</title>' it.html
+
+          # nginx source protection, both directions.
+          test "$(curl -s -o /dev/null -w '%{http_code}' -A "$UA" http://127.0.0.1:8033/typo3conf/localconf.php)" = 403
+          test "$(curl -s -o /dev/null -w '%{http_code}' -A "$UA" http://127.0.0.1:8033/t3lib/class.t3lib_div.php)" = 403
+          test "$(curl -s -o /dev/null -w '%{http_code}' -A "$UA" http://127.0.0.1:8033/typo3/gfx/refresh_n.gif)" = 200
+
+          echo "smoke test passed"
+
+      # The smoke test above never logs in, and that is how a source file PHP
+      # 4.4.9 will not compile once shipped anyway: t3lib_parsehtml_proc declares
+      # a method twice, only record editing includes it, and the result is a blank
+      # 200. So this logs in and
+      # opens the seeded page's header in the editor.
+      - name: Record editing
+        run: |
+          set -euo pipefail
+          BASE=http://127.0.0.1:8033/typo3
+
+          # The 2002 challenge-response login, done the way the form's JavaScript
+          # does it: md5(user:md5(password):challenge). 3.3.0 never stores the
+          # challenge it issued, so any value works. The Referer is not optional —
+          # without a matching host the login dies before checking.
+          challenge=$(head -c 16 /dev/urandom | md5sum | cut -d' ' -f1)
+          pass_md5=$(printf '%s' password | md5sum | cut -d' ' -f1)
+          ident=$(printf 'admin:%s:%s' "$pass_md5" "$challenge" | md5sum | cut -d' ' -f1)
+          curl -fsS -A "$UA" -c jar -e "$BASE/index.php" \
+            -d login_status=login -d username=admin \
+            -d "userident=$ident" -d "challenge=$challenge" \
+            "$BASE/index.php" -o login.html
+
+          # returnUrl is not decoration: alt_doc.php redirects to the last open
+          # document whenever fewer than two GET vars arrive, before the file this
+          # step exists to prove is included. curl -f counts a 302 as success,
+          # hence the explicit status check.
+          code=$(curl -sS -A "$UA" -b jar -o edit.html -w '%{http_code}' \
+            "$BASE/alt_doc.php?returnUrl=db_layout.php%3Fid%3D1&edit%5Bpages%5D%5B1%5D=edit")
+          if [ "$code" != 200 ]; then
+            echo "::error::alt_doc.php answered $code, not 200"
+            exit 1
+          fi
+          # A field named data[table][uid][field] is only written once TCEforms
+          # has rendered the record; the <form> tag alone is written before that.
+          if ! grep -q 'name="data\[pages\]\[1\]\[title\]"' edit.html; then
+            echo "::error::alt_doc.php did not render the page header form ($(wc -c < edit.html) bytes)"
+            head -c 2000 edit.html
+            exit 1
+          fi
+          echo "record editing passed"
+
+      # The login above leaves its session in ./jar. With it logged in, a client
+      # with no cookie must still get a session of its own. 3.3 makes a session
+      # id from the clock alone, so a clock that stands still fails this; it did,
+      # until 3.3/compose.yaml let the clock run (issue #12).
+      - name: Fresh sessions after a login
+        run: |
+          set -euo pipefail
+          BASE=http://127.0.0.1:8033
+          . .github/scripts/ci-backend-session.sh
+          assert_fresh_sessions_are_distinct
+
+      - name: Show logs on failure
+        if: failure()
+        run: docker compose logs
+
+      - name: Tear down
+        if: always()
+        run: docker compose down -v
+
+      # Only when the image itself changed. A compose-only or workflow-only run
+      # has just proved the published image still passes, and pushing the cached
+      # rebuild would hand every pinned user a new digest for the same content.
+      - name: Publish typo3:3.3.0
+        if: env.PUBLISH == 'true' && (needs.changes.outputs.image_3_3 == 'true' || needs.changes.outputs.php4_base == 'true')
+        run: |
+          docker push "${TYPO3_IMAGE}:3.3.0"
+          docker push "${TYPO3_IMAGE}:3.3.0-sha-${GITHUB_SHA}"
+
+  typo3-3-8:
+    needs: changes
+    if: needs.changes.outputs.image_3_8 == 'true' || needs.changes.outputs.stack_3_8 == 'true'
+    runs-on: ubuntu-latest
+    env:
+      COMPOSE_FILE: 3.8/compose.yaml
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build typo3:3.8.1
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: 3.8/Dockerfile
+          load: true
+          tags: |
+            ${{ env.TYPO3_IMAGE }}:3.8.1
+            ${{ env.TYPO3_IMAGE }}:3.8.1-sha-${{ github.sha }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.description=TYPO3 3.8.1 (2005) on PHP 5.6.40. Loopback use only: the core has known, unpatched RCE issues.
+            org.opencontainers.image.licenses=GPL-2.0-or-later
+            org.opencontainers.image.version=3.8.1
+          cache-from: type=gha,scope=typo3-3.8
+          cache-to: type=gha,mode=max,scope=typo3-3.8
+
+      - name: Choose where mysql and nginx come from
+        run: |
+          if docker pull --platform linux/amd64 \
+               "ghcr.io/${GITHUB_REPOSITORY}/mysql@sha256:12da85ab88aedfdf39455872fb044f607c32fdc233cd59f1d26769fbf439b045" >/dev/null; then
+            echo "THROWBACK_MIRROR=ghcr.io/${GITHUB_REPOSITORY}" >> "$GITHUB_ENV"
+          else
+            echo "::warning::GHCR mirror not populated yet; smoke-testing against Docker Hub. Run the mirror workflow."
+            echo "THROWBACK_MIRROR=docker.io/library" >> "$GITHUB_ENV"
+          fi
+
+      - name: Start the stack
+        run: docker compose up -d --no-build
+
+      - name: Wait for the frontend
+        run: |
+          for i in $(seq 1 60); do
+            if curl -fsS --max-time 5 http://127.0.0.1:8038/ >/dev/null 2>&1; then
+              echo "frontend responding after ${i} attempt(s)"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "::error::frontend never came up"
+          docker compose logs
+          exit 1
+
+      - name: Smoke test
+        run: |
+          set -euo pipefail
+
+          . .github/scripts/ci-assert.sh
+
+          curl -fsS -A "$UA" http://127.0.0.1:8038/ -o fe.html
+          # Rendered through the real TypoScript pipeline — which also means
+          # mysql_connect() reached mysql:5.5 and t3lib_db read the seeded
+          # template back out.
+          grep -q '<h1>TYPO3 3.8.1</h1>' fe.html
+          grep -q 'Rendered by TypoScript on PHP 5.6.40' fe.html
+          # The release day, within its first hour: the clock starts at noon and
+          # runs (3.8/Dockerfile).
+          grep -Eq 'Page generated&nbsp;2005-11-14 12:[0-9]{2}:[0-9]{2}' fe.html
+          # A 2005 codebase on PHP 5.6 emits E_DEPRECATED all over. None of it
+          # may reach the HTML. Matched by the shape of PHP's own error output,
+          # not by its first word: .github/scripts/ci-assert.sh says why.
+          refute_php_errors_in fe.html
+
+          curl -fsS -A "$UA" http://127.0.0.1:8038/typo3/index.php -o be.html
+          grep -q 'name="userident"' be.html
+          refute_php_errors_in be.html
+
+          curl -fsS -A "$UA" http://127.0.0.1:8038/typo3/install/index.php -o it.html
+          grep -q '<title>TYPO3 Install Tool</title>' it.html
+          # The REMOTE_ADDR guard patched out in the Dockerfile: the proxy's
+          # address is neither 127.0.0.1 nor 192.168.*, so an unpatched tree
+          # answers with the die() message instead of the tool.
+          refute_in it.html 'the install script is disabled'
+
+          # Source protection, both directions — same policy as the nginx rules
+          # the PHP 4 stacks use.
+          test "$(curl -s -o /dev/null -w '%{http_code}' -A "$UA" http://127.0.0.1:8038/typo3conf/localconf.php)" = 403
+          test "$(curl -s -o /dev/null -w '%{http_code}' -A "$UA" http://127.0.0.1:8038/t3lib/class.t3lib_div.php)" = 403
+          test "$(curl -s -o /dev/null -w '%{http_code}' -A "$UA" http://127.0.0.1:8038/typo3/gfx/refresh_n.gif)" = 200
+          # No directory listing. This answers 200, not 403: TYPO3 ships a blank
+          # t3lib/index.html for exactly this, so the assertion is on the body.
+          curl -fsS -A "$UA" http://127.0.0.1:8038/t3lib/ -o dir.html
+          refute_in dir.html -i 'Index of /'
+
+          echo "smoke test passed"
+
+      # The smoke test never logs in, so nothing proved that 3.8's backend works
+      # past its login form. This logs in the way 4.0's job does, which 3.8 shares
+      # (.github/scripts/ci-backend-session.sh says why), opens the frameset and
+      # the seeded page's header, and then checks that fresh clients still get
+      # fresh sessions. 3.8 makes a session id from the clock and the process id,
+      # so under a clock that stands still one Apache child hands out one id. It
+      # did, until 3.8/Dockerfile let the clock run (issue #13).
+      - name: Backend login and record editing
+        env:
+          BASE: http://127.0.0.1:8038
+        run: |
+          set -euo pipefail
+          . .github/scripts/ci-assert.sh
+          . .github/scripts/ci-backend-session.sh
+          login_and_expect "http://127.0.0.1:8038/typo3/alt_main.php"
+
+          curl -fsS -A "$UA" -b jar "$BASE/typo3/alt_main.php" -o alt_main.html
+          grep -q '<frameset' alt_main.html
+          refute_php_errors_in alt_main.html
+
+          # returnUrl is not decoration, as in 3.3: with fewer than two GET vars
+          # alt_doc.php redirects to the last open document. A field named
+          # data[table][uid][field] is only written once TCEforms has rendered
+          # the record.
+          edit_url="$BASE/typo3/alt_doc.php?returnUrl=db_layout.php%3Fid%3D1&edit%5Bpages%5D%5B1%5D=edit"
+          code=$(curl -sS -A "$UA" -b jar -o edit.html -w '%{http_code}' "$edit_url")
+          if [ "$code" != 200 ]; then
+            echo "::error::alt_doc.php answered $code, not 200"
+            exit 1
+          fi
+          if ! grep -q 'name="data\[pages\]\[1\]\[title\]"' edit.html; then
+            echo "::error::alt_doc.php did not render the page header form ($(wc -c < edit.html) bytes)"
+            head -c 2000 edit.html
+            exit 1
+          fi
+          refute_php_errors_in edit.html
+          echo "record editing passed"
+
+          # Last, so that a failure here cannot hide whether the login and the
+          # editor work.
+          assert_fresh_sessions_are_distinct
+
+      - name: Show logs on failure
+        if: failure()
+        run: docker compose logs
+
+      - name: Tear down
+        if: always()
+        run: docker compose down -v
+
+      - name: Publish typo3:3.8.1
+        if: env.PUBLISH == 'true' && needs.changes.outputs.image_3_8 == 'true'
+        run: |
+          docker push "${TYPO3_IMAGE}:3.8.1"
+          docker push "${TYPO3_IMAGE}:3.8.1-sha-${GITHUB_SHA}"
+
+  typo3-4-0:
+    needs: changes
+    if: needs.changes.outputs.image_4_0 == 'true' || needs.changes.outputs.stack_4_0 == 'true'
+    runs-on: ubuntu-latest
+    # Same base digest as typo3-3-8, and no dependency on php4-base. 4.0 sits
+    # between 3.8 and 4.5: 3.8's latin1 and Install Tool, 4.5's absolute
+    # redirects. So beyond 3.8's checks this job logs in, saves a record, runs a
+    # control experiment on the one PHP setting a latin1 application on PHP 5.6
+    # cannot do without, and repeats the backend checks with the container told
+    # it sits behind TLS.
+    env:
+      COMPOSE_FILE: 4.0/compose.yaml
+      # The helpers in 4.0/ call compose through this, so they work wherever
+      # COMPOSE_FILE points.
+      COMPOSE: docker compose
+      BASE: http://127.0.0.1:8040
+      # What a reader should see where 4.0/provision.php seeded the root page's
+      # title. 4.0 is ISO-8859-1, so it stores the ø, the ö and the dots as latin1
+      # bytes and the rest as numeric character references, the way the backend's
+      # own form submits them. 4.0/ci-probe.py computes those bytes from this
+      # text, independently of provision.php.
+      CHARSET_PROBE: 'Skaarhøj · Gödöllő · 日本語'
+      # The title the job saves through the record editor, so that the frontend
+      # can show a value TCEmain wrote rather than one provision.php did.
+      CHARSET_PROBE_SAVED: 'Skaarhøj · Gödöllő · 日本語 · gespeichert'
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # The Dockerfile re-verifies both of the archive's upstream checksums. It
+      # came from a mirror, not get.typo3.org (vendor-src/typo3-4.0.13/PROVENANCE.md).
+      - name: Build typo3:4.0.13
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: 4.0/Dockerfile
+          load: true
+          tags: |
+            ${{ env.TYPO3_IMAGE }}:4.0.13
+            ${{ env.TYPO3_IMAGE }}:4.0.13-sha-${{ github.sha }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.description=TYPO3 4.0.13 (2009) on PHP 5.6.40. Loopback use only: the core has known, unpatched RCE issues.
+            org.opencontainers.image.licenses=GPL-2.0-or-later
+            org.opencontainers.image.version=4.0.13
+          cache-from: type=gha,scope=typo3-4.0
+          cache-to: type=gha,mode=max,scope=typo3-4.0
+
+      - name: Choose where mysql and nginx come from
+        run: |
+          if docker pull --platform linux/amd64 \
+               "ghcr.io/${GITHUB_REPOSITORY}/mysql@sha256:12da85ab88aedfdf39455872fb044f607c32fdc233cd59f1d26769fbf439b045" >/dev/null; then
+            echo "THROWBACK_MIRROR=ghcr.io/${GITHUB_REPOSITORY}" >> "$GITHUB_ENV"
+          else
+            echo "::warning::GHCR mirror not populated yet; smoke-testing against Docker Hub. Run the mirror workflow."
+            echo "THROWBACK_MIRROR=docker.io/library" >> "$GITHUB_ENV"
+          fi
+
+      - name: Start the stack
+        run: docker compose up -d --no-build
+
+      - name: Wait for the frontend
+        run: |
+          for i in $(seq 1 60); do
+            if curl -fsS --max-time 5 "$BASE/" >/dev/null 2>&1; then
+              echo "frontend responding after ${i} attempt(s)"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "::error::frontend never came up"
+          docker compose logs
+          exit 1
+
+      - name: Smoke test
+        run: |
+          set -euo pipefail
+          . .github/scripts/ci-assert.sh
+
+          curl -fsS -A "$UA" -D fe.headers "$BASE/" -o fe.html
+          grep -q '<h1>TYPO3 4.0.13</h1>' fe.html
+          grep -q 'Rendered by TypoScript on PHP 5.6.40' fe.html
+          grep -q 'Page generated&nbsp;2009-07-02 12:00:00' fe.html
+          # ISO-8859-1, as TSFE says when nothing overrides defaultCharSet
+          # (class.tslib_fe.php:348, :2855), and the probe through it byte for byte:
+          # written by provision.php, stored by MySQL as latin1, read back by
+          # t3lib_db, rendered by TypoScript, and decoded the way a browser would.
+          grep -qi '^content-type: text/html; *charset=iso-8859-1' fe.headers
+          python3 -I 4.0/ci-probe.py frontend fe.html "$CHARSET_PROBE"
+          refute_php_errors_in fe.html
+
+          curl -fsS -A "$UA" "$BASE/typo3/index.php" -o be.html
+          grep -q 'name="userident"' be.html
+          grep -qE 'name="challenge" value="[0-9a-f]{32}"' be.html
+          refute_php_errors_in be.html
+
+          # The die() commented out in the Dockerfile: the proxy's address is
+          # neither 127.0.0.1 nor 192.168.*, so an unpatched source tree answers
+          # with the die() message instead of the tool's password form.
+          curl -fsS -A "$UA" "$BASE/typo3/install/index.php" -o it.html
+          grep -q '<title>TYPO3 Install Tool</title>' it.html
+          grep -q 'name="passwordForm"' it.html
+          refute_in it.html 'the install script is disabled'
+          refute_php_errors_in it.html
+
+          # Source protection, both directions. Apache rules, the same policy as
+          # 3.8's. temp_CACHED_* is the extension cache 4.0 writes into typo3conf
+          # (config_default.php:106); denied by location, so 403 whether or not
+          # it has been written yet.
+          test "$(curl -s -o /dev/null -w '%{http_code}' -A "$UA" "$BASE/typo3conf/localconf.php")" = 403
+          test "$(curl -s -o /dev/null -w '%{http_code}' -A "$UA" "$BASE/typo3conf/temp_CACHED_ps0000_ext_localconf.php")" = 403
+          test "$(curl -s -o /dev/null -w '%{http_code}' -A "$UA" "$BASE/t3lib/class.t3lib_div.php")" = 403
+          test "$(curl -s -o /dev/null -w '%{http_code}' -A "$UA" "$BASE/typo3/gfx/refresh_n.gif")" = 200
+          curl -fsS -A "$UA" "$BASE/t3lib/" -o dir.html
+          refute_in dir.html -i 'Index of /'
+
+          echo "smoke test passed"
+
+      # Logs in the way the form's JavaScript does, opens the frameset, then opens
+      # and saves the seeded page. The redirect is asserted rather than followed,
+      # because where it points is the finding: 4.0's redirects are absolute,
+      # so plain HTTP must answer http:// here and the TLS phase must answer
+      # https://.
+      - name: Backend login and record editing
+        run: |
+          set -euo pipefail
+          . .github/scripts/ci-assert.sh
+          . .github/scripts/ci-backend-session.sh
+          login_and_expect "http://127.0.0.1:8040/typo3/alt_main.php"
+
+          # With that session logged in, fresh clients must still get fresh
+          # sessions. Under the frozen clock they did not, until each request got
+          # its own process (apache-typo3.conf, MaxConnectionsPerChild).
+          assert_fresh_sessions_are_distinct
+
+          # The frameset itself, which is what 4.0 has where 4.5 has backend.php.
+          curl -fsS -A "$UA" -b jar "$BASE/typo3/alt_main.php" -o alt_main.html
+          grep -q '<frameset' alt_main.html
+          grep -q 'src="alt_intro.php"' alt_main.html
+          refute_php_errors_in alt_main.html
+
+          edit_url="$BASE/typo3/alt_doc.php?returnUrl=db_layout.php%3Fid%3D1&edit%5Bpages%5D%5B1%5D=edit"
+          code=$(curl -sS -A "$UA" -b jar -D edit.headers -o edit.html -w '%{http_code}' "$edit_url")
+          if [ "$code" != 200 ]; then
+            echo "::error::alt_doc.php answered $code, not 200"
+            exit 1
+          fi
+          grep -qi '^content-type: text/html; *charset=iso-8859-1' edit.headers
+          # The probe through TCEforms: htmlspecialchars() over the latin1 bytes,
+          # so the references arrive with their ampersands escaped and the field
+          # shows them as typed text.
+          python3 -I 4.0/ci-probe.py form edit.html "$CHARSET_PROBE"
+          refute_php_errors_in edit.html
+
+          # Saving, as the form does: doSave, the title percent-encoded byte for
+          # byte as an ISO-8859-1 page submits it, and a Referer on this host
+          # (typo3/alt_doc.php:290-292).
+          # -d @file rather than --data-binary: the body is already percent-encoded,
+          # and -d drops the trailing newline print() leaves, which would otherwise
+          # become part of the title.
+          python3 -I 4.0/ci-probe.py post-title "$CHARSET_PROBE_SAVED" > save.body
+          code=$(curl -sS -A "$UA" -b jar -e "$edit_url" -o saved.html -w '%{http_code}' \
+            -d @save.body -d doSave=1 "$edit_url")
+          if [ "$code" != 200 ]; then
+            echo "::error::saving through alt_doc.php answered $code, not 200"
+            exit 1
+          fi
+          python3 -I 4.0/ci-probe.py form saved.html "$CHARSET_PROBE_SAVED"
+          refute_php_errors_in saved.html
+
+          # What TCEmain wrote, read from MySQL itself: one byte per latin1
+          # character, so F8 for the ø and not UTF-8's C3B8.
+          expected=$(python3 -I 4.0/ci-probe.py stored-hex "$CHARSET_PROBE_SAVED")
+          stored=$(docker compose exec -T db mysql -utypo3 -ptypo3 -N -B -e 'SELECT HEX(title) FROM pages WHERE uid = 1' typo3)
+          if [ "$stored" != "$expected" ]; then
+            echo "::error::pages.title holds 0x$stored, expected 0x$expected"
+            exit 1
+          fi
+
+          # And back out through TypoScript. no_cache, because the question is what
+          # the database now holds, not whether TCEmain cleared the page cache.
+          curl -fsS -A "$UA" "$BASE/?no_cache=1" -o fe-saved.html
+          python3 -I 4.0/ci-probe.py frontend fe-saved.html "$CHARSET_PROBE_SAVED"
+          refute_php_errors_in fe-saved.html
+          echo "backend login and record editing passed"
+
+      # The default_charset finding, run. 4.0 never names a
+      # charset when it calls htmlspecialchars(), so PHP 5.6 uses default_charset,
+      # and 4.0/php-legacy.ini pins it to ISO-8859-1. The claim is that the pin is
+      # load-bearing: under 5.6's own default, UTF-8, every latin1 byte is an
+      # invalid sequence, htmlspecialchars() answers with an empty string, and the
+      # record editor shows the title blank — while the frontend, which does not
+      # escape it, looks perfectly fine.
+      #
+      # The control file sets only that line, plus expose_php Off as the marker,
+      # and the judged reply has to carry the marker: a blank field is an absence,
+      # and a stale Apache child on the shipped settings would not show one.
+      - name: The default_charset control
+        run: |
+          set -euo pipefail
+          . .github/scripts/ci-assert.sh
+          . .github/scripts/ci-backend-session.sh
+          . 4.0/ci-php-control.sh
+          login_and_expect "http://127.0.0.1:8040/typo3/alt_main.php"
+          edit_url="$BASE/typo3/alt_doc.php?returnUrl=db_layout.php%3Fid%3D1&edit%5Bpages%5D%5B1%5D=edit"
+
+          apply_php_control Off 'default_charset = "UTF-8"'
+          curl -fsS -A "$UA" -b jar -D control.edit.headers -o control-edit.html "$edit_url"
+          served_with_expose_php control.edit.headers Off
+          python3 -I 4.0/ci-probe.py form-blank control-edit.html
+          # TYPO3 still says ISO-8859-1 in its own header; PHP's setting changed
+          # what htmlspecialchars() assumes, not what the page claims to be.
+          grep -qi '^content-type: text/html; *charset=iso-8859-1' control.edit.headers
+          curl -fsS -A "$UA" -D control.fe.headers "$BASE/?no_cache=1" -o control-fe.html
+          served_with_expose_php control.fe.headers Off
+          python3 -I 4.0/ci-probe.py frontend control-fe.html "$CHARSET_PROBE_SAVED"
+          echo "control: under default_charset UTF-8 the editor blanks the title and the frontend does not show it"
+
+          clear_php_control
+          curl -fsS -A "$UA" -b jar -D restored.edit.headers -o restored-edit.html "$edit_url"
+          served_with_expose_php restored.edit.headers On
+          python3 -I 4.0/ci-probe.py form restored-edit.html "$CHARSET_PROBE_SAVED"
+          echo "the default_charset control passed"
+
+      # The TLS finding, run. 4.0's redirects are absolute, as
+      # 4.5's are, so the container is recreated with HTTPS=on, as a
+      # TLS-terminating proxy in front of it would need, and the edge proxy with
+      # it, because nginx resolved web's old address at startup.
+      #
+      # What this proves: Apache's SetEnv reaches TYPO3_SSL, and redirects switch
+      # to https://. What 4.5 needs a second setting for, 4.0 does not:
+      # trustedHostsPattern does not exist yet, so the backend answering here is
+      # the evidence there is nothing in 4.0 that refuses a request once it
+      # believes it is on 443. What it does not prove is a real TLS proxy: the
+      # loopback proxy here forwards plain HTTP and rewrites nothing.
+      - name: Behind TLS
+        run: |
+          set -euo pipefail
+          . .github/scripts/ci-assert.sh
+          . .github/scripts/ci-backend-session.sh
+
+          # The negative control, first, on the stack as it is.
+          location=$(curl -sS -A "$UA" -o /dev/null -D - "$BASE/typo3/index_re.php" \
+            | tr -d '\r' | sed -n 's/^[Ll]ocation: //p')
+          if [ "$location" != "http://127.0.0.1:8040/typo3/index.php" ]; then
+            echo "::error::index_re.php redirected to '$location' before TLS was switched on"
+            exit 1
+          fi
+
+          TYPO3_BEHIND_TLS=1 docker compose up -d --no-build --force-recreate web edge
+
+          for i in $(seq 1 60); do
+            curl -fsS --max-time 5 "$BASE/" >/dev/null 2>&1 && break
+            sleep 5
+          done
+          # To a file first: grep -q stops reading at the first match, and under
+          # pipefail the SIGPIPE that leaves docker compose would fail the step.
+          docker compose logs web > web-tls.log
+          grep -q 'told it sits behind TLS' web-tls.log
+
+          curl -fsS -A "$UA" "$BASE/" -o fe-tls.html
+          grep -q '<h1>TYPO3 4.0.13</h1>' fe-tls.html
+          refute_php_errors_in fe-tls.html
+
+          # Any redirect will do; this one needs no login (typo3/index_re.php:43-45).
+          location=$(curl -sS -A "$UA" -o /dev/null -D - "$BASE/typo3/index_re.php" \
+            | tr -d '\r' | sed -n 's/^[Ll]ocation: //p')
+          if [ "$location" != "https://127.0.0.1:8040/typo3/index.php" ]; then
+            echo "::error::index_re.php redirected to '$location', not to https://"
+            exit 1
+          fi
+
+          login_and_expect "https://127.0.0.1:8040/typo3/alt_main.php"
+
+          curl -fsS -A "$UA" -b jar "$BASE/typo3/alt_main.php" -o alt_main-tls.html
+          grep -q '<frameset' alt_main-tls.html
+          refute_php_errors_in alt_main-tls.html
+          echo "behind-TLS phase passed"
+
+      - name: Show logs on failure
+        if: failure()
+        run: docker compose logs
+
+      - name: Tear down
+        if: always()
+        run: docker compose down -v
+
+      # Only when the image itself changed, for the reason the 3.3 job gives.
+      - name: Publish typo3:4.0.13
+        if: env.PUBLISH == 'true' && needs.changes.outputs.image_4_0 == 'true'
+        run: |
+          docker push "${TYPO3_IMAGE}:4.0.13"
+          docker push "${TYPO3_IMAGE}:4.0.13-sha-${GITHUB_SHA}"
+
+  typo3-4-5:
+    needs: changes
+    if: needs.changes.outputs.image_4_5 == 'true' || needs.changes.outputs.stack_4_5 == 'true'
+    runs-on: ubuntu-latest
+    # Same base digest as typo3-3-8 and no dependency on php4-base. Like the 4.0
+    # job, this one also proves the configuration a TLS-terminating proxy in
+    # front of it would need, because that configuration was argued from
+    # source.
+    env:
+      COMPOSE_FILE: 4.5/compose.yaml
+      # The job's own control step calls compose through this.
+      COMPOSE: docker compose
+      BASE: http://127.0.0.1:8045
+      # The root page's title, as 4.5/provision.php writes it. ø and ö are
+      # inside latin1; ő and the Japanese are not, so this string only arrives
+      # intact if the database stored UTF-8.
+      CHARSET_PROBE: 'Skaarhøj · Gödöllő · 日本語'
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # The Dockerfile re-verifies both of the archive's upstream checksums. It
+      # came from a mirror, not get.typo3.org (vendor-src/typo3-4.5.40/PROVENANCE.md).
+      - name: Build typo3:4.5.40
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: 4.5/Dockerfile
+          load: true
+          tags: |
+            ${{ env.TYPO3_IMAGE }}:4.5.40
+            ${{ env.TYPO3_IMAGE }}:4.5.40-sha-${{ github.sha }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.description=TYPO3 4.5.40 (2015) on PHP 5.6.40. Loopback use only: the core has known, unpatched RCE issues.
+            org.opencontainers.image.licenses=GPL-2.0-or-later
+            org.opencontainers.image.version=4.5.40
+          cache-from: type=gha,scope=typo3-4.5
+          cache-to: type=gha,mode=max,scope=typo3-4.5
+
+      - name: Choose where mysql and nginx come from
+        run: |
+          if docker pull --platform linux/amd64 \
+               "ghcr.io/${GITHUB_REPOSITORY}/mysql@sha256:12da85ab88aedfdf39455872fb044f607c32fdc233cd59f1d26769fbf439b045" >/dev/null; then
+            echo "THROWBACK_MIRROR=ghcr.io/${GITHUB_REPOSITORY}" >> "$GITHUB_ENV"
+          else
+            echo "::warning::GHCR mirror not populated yet; smoke-testing against Docker Hub. Run the mirror workflow."
+            echo "THROWBACK_MIRROR=docker.io/library" >> "$GITHUB_ENV"
+          fi
+
+      - name: Start the stack
+        run: docker compose up -d --no-build
+
+      - name: Wait for the frontend
+        run: |
+          for i in $(seq 1 60); do
+            if curl -fsS --max-time 5 "$BASE/" >/dev/null 2>&1; then
+              echo "frontend responding after ${i} attempt(s)"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "::error::frontend never came up"
+          docker compose logs
+          exit 1
+
+      - name: Smoke test
+        run: |
+          set -euo pipefail
+          . .github/scripts/ci-assert.sh
+
+          curl -fsS -A "$UA" -D fe.headers "$BASE/" -o fe.html
+          grep -q '<h1>TYPO3 4.5.40</h1>' fe.html
+          grep -q 'Rendered by TypoScript on PHP 5.6.40' fe.html
+          grep -q 'Page generated&nbsp;2015-02-19 12:00:00' fe.html
+          # The UTF-8 round trip, end to end: written by provision.php, stored by
+          # MySQL, read back by t3lib_db and rendered by TypoScript.
+          if ! grep -qF "<p id=\"charset-probe\">${CHARSET_PROBE}</p>" fe.html; then
+            echo "::error::the root page title did not survive as UTF-8"
+            grep -o '<p id="charset-probe">.*</p>' fe.html || true
+            exit 1
+          fi
+          grep -qi '^content-type: text/html; *charset=utf-8' fe.headers
+          refute_php_errors_in fe.html
+
+          curl -fsS -A "$UA" "$BASE/typo3/index.php" -o be.html
+          grep -q 'name="userident"' be.html
+          # The challenge 4.5 keeps in the PHP session and checks on login
+          # (t3lib/class.t3lib_userauth.php:1322-1331), rendered by sv's login hook.
+          grep -qE 'name="challenge" value="[0-9a-f]{32}"' be.html
+          refute_php_errors_in be.html
+
+          # Reachable through typo3conf/ENABLE_INSTALL_TOOL alone, with no source
+          # edit: the login form, not the lock page.
+          curl -fsS -A "$UA" "$BASE/typo3/install/index.php" -o it.html
+          grep -q 'id="t3-install-form-password"' it.html
+          refute_in it.html 'The Install Tool is locked'
+
+          # Source protection, both directions, plus the deprecation log 4.5
+          # writes into typo3conf. Denied by location, so 403 whether or not the
+          # file has been written yet.
+          test "$(curl -s -o /dev/null -w '%{http_code}' -A "$UA" "$BASE/typo3conf/localconf.php")" = 403
+          test "$(curl -s -o /dev/null -w '%{http_code}' -A "$UA" "$BASE/typo3conf/deprecation_0123456789.log")" = 403
+          test "$(curl -s -o /dev/null -w '%{http_code}' -A "$UA" "$BASE/t3lib/class.t3lib_div.php")" = 403
+          test "$(curl -s -o /dev/null -w '%{http_code}' -A "$UA" "$BASE/typo3/gfx/refresh_n.gif")" = 200
+          curl -fsS -A "$UA" "$BASE/t3lib/" -o dir.html
+          refute_in dir.html -i 'Index of /'
+
+          echo "smoke test passed"
+
+      # Logs in the way the form's JavaScript does, opens the backend and edits
+      # the seeded page. The 303 is asserted rather than followed, because where
+      # it points is the finding: 4.5 builds every redirect as an absolute URL,
+      # so plain HTTP must answer http:// here, and the phase after this
+      # one must answer https://.
+      - name: Backend login and record editing
+        run: |
+          set -euo pipefail
+          . .github/scripts/ci-assert.sh
+          . 4.5/ci-login.sh
+          login_and_expect "http://127.0.0.1:8045/typo3/backend.php"
+
+          curl -fsS -A "$UA" -b jar "$BASE/typo3/backend.php" -o backend.html
+          # The body URL, in its plain-HTTP form: the negative control for the
+          # TLS phase below.
+          grep -qF '"siteUrl":"http:\/\/127.0.0.1:8045\/"' backend.html
+          refute_php_errors_in backend.html
+
+          code=$(curl -sS -A "$UA" -b jar -o edit.html -w '%{http_code}' \
+            "$BASE/typo3/alt_doc.php?returnUrl=db_layout.php%3Fid%3D1&edit%5Bpages%5D%5B1%5D=edit")
+          if [ "$code" != 200 ]; then
+            echo "::error::alt_doc.php answered $code, not 200"
+            exit 1
+          fi
+          if ! grep -q 'name="data\[pages\]\[1\]\[title\]' edit.html; then
+            echo "::error::alt_doc.php did not render the page header form ($(wc -c < edit.html) bytes)"
+            head -c 2000 edit.html
+            exit 1
+          fi
+          # The probe once more, through TCEforms rather than TypoScript.
+          grep -qF "$CHARSET_PROBE" edit.html
+          echo "backend login and record editing passed"
+
+      # The backend's AJAX path, which nothing above takes, and the PHP 5.6
+      # behaviour argued from the
+      # documentation: a JSON POST, which is every Ext.Direct call, makes 5.6
+      # raise "Automatically populating $HTTP_RAW_POST_DATA is deprecated" unless
+      # always_populate_raw_post_data is -1.
+      #
+      # Three phases, so that the shipped setting is shown to be the thing that
+      # matters rather than assumed to be:
+      #
+      #   1. as shipped: the page tree answers, as JSON, with the seeded page
+      #   2. the shipped ini plus every display PHP has (display_errors,
+      #      display_startup_errors, E_ALL): the deprecation still does not
+      #      appear, and the reply is still the whole page tree as JSON
+      #   3. the same with only always_populate_raw_post_data = 0: it appears, in
+      #      front of the JSON, and the reply stops parsing
+      #
+      # display_startup_errors is not decoration. 5.6 reads the POST body during
+      # request startup, and php_error_cb only shows errors raised then when that
+      # setting is on as well (main/main.c:1161 in 5.6.40).
+      #
+      # Each phase's settings go into a conf.d file loaded after the shipped one,
+      # and Apache restarts gracefully to read them. expose_php flips with each
+      # phase, so X-Powered-By says when the new settings are the ones answering
+      # — first on any request, to wait for the restart, and then on the very
+      # reply each phase judges, since a stale child could otherwise answer it.
+      - name: Ext.Direct, and PHP 5.6's raw-POST deprecation
+        run: |
+          set -euo pipefail
+          . .github/scripts/ci-assert.sh
+          . 4.5/ci-login.sh
+          . 4.5/ci-extdirect.sh
+
+          login_and_expect "http://127.0.0.1:8045/typo3/backend.php"
+          read_extdirect_token
+
+          code=$(call_page_tree tree.json)
+          test "$code" = 200 || { echo "::error::ajax.php answered $code"; head -c 1000 tree.json; exit 1; }
+          python3 -I 4.5/ci-check-page-tree.py tree.json "$CHARSET_PROBE"
+          refute_php_errors_in tree.json
+
+          # apply_control <expose_php: On|Off> [more ini lines...]
+          apply_control() {
+            expose="$1"
+            shift
+            printf '%s\n' "expose_php = $expose" 'error_reporting = E_ALL' \
+                'display_errors = On' 'display_startup_errors = On' 'html_errors = Off' "$@" \
+              | $COMPOSE exec -T web sh -c \
+                  'cat > /usr/local/etc/php/conf.d/zzz-ci-control.ini && apache2ctl -k graceful'
+            for i in $(seq 1 30); do
+              curl -sS -o /dev/null -D control.headers "$BASE/" || true
+              if grep -qi '^x-powered-by:' control.headers; then seen=On; else seen=Off; fi
+              [ "$seen" = "$expose" ] && return 0
+              sleep 1
+            done
+            echo "::error::Apache did not pick up the control settings (expose_php still not $expose)"
+            exit 1
+          }
+          RAW_POST_DEPRECATION='Automatically populating $HTTP_RAW_POST_DATA'
+
+          apply_control Off
+          call_page_tree tree-displayed.json > /dev/null
+          served_with_expose_php tree-displayed.json Off
+          refute_in tree-displayed.json -F "$RAW_POST_DEPRECATION"
+          python3 -I 4.5/ci-check-page-tree.py tree-displayed.json "$CHARSET_PROBE"
+          echo "with every display on and the shipped -1, the reply is clean"
+
+          # No served_with_expose_php here, and its absence is the finding rather
+          # than an oversight. This phase asserts that something appears, and the
+          # deprecation can only come from this phase's settings — the shipped ones
+          # hide it and phase 2's -1 prevents it — so the reply proves which
+          # settings served it. It also cannot carry the marker: PHP prints the
+          # deprecation during request startup, before it adds X-Powered-By, and
+          # then logs "Cannot modify header information - headers already sent".
+          # The second assertion below holds the step to that.
+          apply_control On 'always_populate_raw_post_data = 0'
+          call_page_tree tree-control.json > /dev/null
+          if ! grep -qF "$RAW_POST_DEPRECATION" tree-control.json; then
+            echo "::error::with always_populate_raw_post_data = 0 the deprecation never appeared, so phase 2 proved nothing"
+            head -c 1000 tree-control.json
+            exit 1
+          fi
+          if python3 -I -c 'import json, sys; json.load(open(sys.argv[1]))' tree-control.json 2>/dev/null; then
+            echo "::error::the deprecation appeared but the reply still parses; the expected consequence did not happen"
+            exit 1
+          fi
+          # Headers first, then the deprecation, would mean PHP's own headers
+          # survived it. They do not: this phase's settings put expose_php on, and
+          # the reply still carries no X-Powered-By.
+          if grep -qi '^x-powered-by:' tree-control.json.headers; then
+            echo "::error::X-Powered-By survived the deprecation; PHP's headers went out before it"
+            exit 1
+          fi
+          echo "control: with the setting at 0, the deprecation leads the reply, breaks the JSON and costs PHP its own headers"
+
+          # Back to the shipped settings. Phase 3 had expose_php on as well, so the
+          # marker cannot tell the two apart; a clean reply can, since phase 3's
+          # settings put the deprecation in front of it.
+          $COMPOSE exec -T web sh -c 'rm /usr/local/etc/php/conf.d/zzz-ci-control.ini && apache2ctl -k graceful'
+          for i in $(seq 1 30); do
+            call_page_tree tree-restored.json > /dev/null || true
+            python3 -I 4.5/ci-check-page-tree.py tree-restored.json "$CHARSET_PROBE" > /dev/null 2>&1 && break
+            sleep 1
+          done
+          python3 -I 4.5/ci-check-page-tree.py tree-restored.json "$CHARSET_PROBE"
+          echo "Ext.Direct passed"
+
+      # The TLS findings, run. The web container is
+      # recreated with HTTPS=on, as a TLS-terminating proxy in front of it would
+      # need, and the edge proxy with it, because nginx resolved web's old address
+      # at startup.
+      #
+      # What this proves: Apache's SetEnv reaches TYPO3_SSL, redirects and the
+      # backend's siteUrl switch to https://, and trustedHostsPattern '.*' keeps
+      # 4.5.40 from refusing every request once TYPO3 believes it is on port 443
+      # while Apache reports 80. What it does not prove is a real TLS proxy: the
+      # loopback proxy here forwards plain HTTP and rewrites nothing.
+      - name: Behind TLS
+        run: |
+          set -euo pipefail
+          . .github/scripts/ci-assert.sh
+          . 4.5/ci-login.sh
+          TYPO3_BEHIND_TLS=1 docker compose up -d --no-build --force-recreate web edge
+
+          for i in $(seq 1 60); do
+            curl -fsS --max-time 5 "$BASE/" >/dev/null 2>&1 && break
+            sleep 5
+          done
+          # To a file first: grep -q stops reading at the first match, and under
+          # pipefail the SIGPIPE that leaves docker compose would fail the step.
+          docker compose logs web > web-tls.log
+          grep -q 'told it sits behind TLS' web-tls.log
+
+          curl -fsS -A "$UA" "$BASE/" -o fe-tls.html
+          grep -q '<h1>TYPO3 4.5.40</h1>' fe-tls.html
+
+          # Any redirect will do; this one needs no login (typo3/index_re.php:45).
+          location=$(curl -sS -A "$UA" -o /dev/null -D - "$BASE/typo3/index_re.php" \
+            | tr -d '\r' | sed -n 's/^[Ll]ocation: //p')
+          if [ "$location" != "https://127.0.0.1:8045/typo3/index.php" ]; then
+            echo "::error::index_re.php redirected to '$location', not to https://"
+            exit 1
+          fi
+
+          # The trustedHostsPattern failure is UnexpectedValueException 1396795884
+          # on every request but the Install Tool's; the login form rendering is the
+          # proof that it did not happen.
+          curl -fsS -A "$UA" "$BASE/typo3/index.php" -o be-tls.html
+          grep -q 'name="userident"' be-tls.html
+          refute_in be-tls.html 'trusted hosts pattern'
+
+          login_and_expect "https://127.0.0.1:8045/typo3/backend.php"
+
+          curl -fsS -A "$UA" -b jar "$BASE/typo3/backend.php" -o backend-tls.html
+          grep -qF '"siteUrl":"https:\/\/127.0.0.1:8045\/"' backend-tls.html
+          echo "behind-TLS phase passed"
+
+      - name: Show logs on failure
+        if: failure()
+        run: docker compose logs
+
+      - name: Tear down
+        if: always()
+        run: docker compose down -v
+
+      # Only when the image itself changed, for the reason the 3.3 job gives.
+      - name: Publish typo3:4.5.40
+        if: env.PUBLISH == 'true' && needs.changes.outputs.image_4_5 == 'true'
+        run: |
+          docker push "${TYPO3_IMAGE}:4.5.40"
+          docker push "${TYPO3_IMAGE}:4.5.40-sha-${GITHUB_SHA}"
+
+  typo3-6-2:
+    needs: changes
+    if: needs.changes.outputs.image_6_2 == 'true' || needs.changes.outputs.stack_6_2 == 'true'
+    runs-on: ubuntu-latest
+    # Same base digest as the other PHP 5.6 stacks, and no dependency on php4-base.
+    # Parity with typo3-4-5, step for step: the frontend with the UTF-8 probe, a
+    # backend login and record editing, Ext.Direct with the raw-POST control, and
+    # the TLS phase. What differs is underneath: the stack is set up by 6.2's own
+    # installer on first boot, and the login is rsaauth's.
+    # docs/how-it-works.md.
+
+    env:
+      COMPOSE_FILE: 6.2/compose.yaml
+      # Every step calls compose through this, so it follows COMPOSE_FILE.
+      COMPOSE: docker compose
+      BASE: http://127.0.0.1:8062
+      # 4.5's probe, stored as UTF-8 by 6.2/provision.php. ø and ö are
+      # inside latin1; ő and the Japanese are not.
+      CHARSET_PROBE: 'Skaarhøj · Gödöllő · 日本語'
+      # The title the job saves through the record editor, so the frontend can
+      # show a value DataHandler wrote rather than one provision.php did.
+      CHARSET_PROBE_SAVED: 'Skaarhøj · Gödöllő · 日本語 · gespeichert'
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # The Dockerfile re-verifies both of the archive's upstream checksums, and
+      # asserts every PHP extension INSTALL.md calls required.
+      - name: Build typo3:6.2.31
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: 6.2/Dockerfile
+          load: true
+          tags: |
+            ${{ env.TYPO3_IMAGE }}:6.2.31
+            ${{ env.TYPO3_IMAGE }}:6.2.31-sha-${{ github.sha }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.description=TYPO3 6.2.31 (2017) on PHP 5.6.40. Loopback use only: the core has known, unpatched RCE issues.
+            org.opencontainers.image.licenses=GPL-2.0-or-later
+            org.opencontainers.image.version=6.2.31
+          cache-from: type=gha,scope=typo3-6.2
+          cache-to: type=gha,mode=max,scope=typo3-6.2
+
+      - name: Choose where mysql and nginx come from
+        run: |
+          if docker pull --platform linux/amd64 \
+               "ghcr.io/${GITHUB_REPOSITORY}/mysql@sha256:12da85ab88aedfdf39455872fb044f607c32fdc233cd59f1d26769fbf439b045" >/dev/null; then
+            echo "THROWBACK_MIRROR=ghcr.io/${GITHUB_REPOSITORY}" >> "$GITHUB_ENV"
+          else
+            echo "::warning::GHCR mirror not populated yet; smoke-testing against Docker Hub. Run the mirror workflow."
+            echo "THROWBACK_MIRROR=docker.io/library" >> "$GITHUB_ENV"
+          fi
+
+      - name: Start the stack
+        run: $COMPOSE up -d --no-build
+
+      # Longer than the other stacks' wait, because first boot runs the whole
+      # step installer before Apache starts for good. And it waits for the seeded
+      # page itself, not for any answer: during the install a 303 into the
+      # installer would satisfy curl -f, and the second CI run read the
+      # installer's log half-written because of exactly that. The install-phase
+      # Apache now refuses anything but loopback as well (apache-typo3.conf).
+      - name: Wait for the frontend
+        run: |
+          # The status each attempt got is printed, because the ones before the
+          # site was ready are the edge's view of the install window: 403 while
+          # the installer runs, 502 while no Apache listens at all.
+          seen=''
+          for i in $(seq 1 90); do
+            code=$(curl -sS --max-time 5 -o page.html -w '%{http_code}' "$BASE/" 2>/dev/null || true)
+            seen="$seen $code"
+            if [ "$code" = 200 ] && grep -q '<h1>TYPO3 6.2.31</h1>' page.html; then
+              echo "frontend rendering the seeded page after ${i} attempt(s); statuses seen:$seen"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "statuses seen:$seen"
+          echo "::error::frontend never came up"
+          $COMPOSE logs
+          exit 1
+
+      # What the installer did, from its own log lines: the steps it walked, the
+      # environment check's verdict on PHP 5.6, and the tables it created. Printed
+      # so the run records them, then held to the parts that must be true.
+      - name: The installer's own record
+        run: |
+          set -euo pipefail
+          # Name the command that failed. Several of these checks are greps that
+          # would otherwise end the step with nothing but an exit code.
+          set -E
+          trap 'echo "::error::failed: $BASH_COMMAND"' ERR
+          $COMPOSE logs web > web-install.log
+          grep -E '\[(entrypoint|install|provision)\]' web-install.log
+          grep -q 'installer finished after environmentAndFolders, databaseConnect, databaseSelect, databaseData, defaultConfiguration' web-install.log
+          grep -q 'UTF-8 round trip through pages.title: ok' web-install.log
+
+      - name: Smoke test
+        run: |
+          set -euo pipefail
+          # Name the command that failed. Several of these checks are greps that
+          # would otherwise end the step with nothing but an exit code.
+          set -E
+          trap 'echo "::error::failed: $BASH_COMMAND"' ERR
+          . .github/scripts/ci-assert.sh
+
+          curl -fsS -A "$UA" -D fe.headers "$BASE/" -o fe.html
+          grep -q '<h1>TYPO3 6.2.31</h1>' fe.html
+          grep -q 'Rendered by TypoScript on PHP 5.6.40' fe.html
+          grep -q 'Page generated&nbsp;2017-04-18 12:00:00' fe.html
+          if ! grep -qF "<p id=\"charset-probe\">${CHARSET_PROBE}</p>" fe.html; then
+            echo "::error::the root page title did not survive as UTF-8"
+            grep -o '<p id="charset-probe">.*</p>' fe.html || true
+            exit 1
+          fi
+          grep -qi '^content-type: text/html; *charset=utf-8' fe.headers
+          refute_php_errors_in fe.html
+
+          # rsaauth's form, which is what the installer's factory configuration
+          # selects (loginSecurityLevel = rsa), not 4.5's challenge form. The id is
+          # the evidence: only rsaauth's hook writes a form tag carrying it
+          # (rsaauth/Classes/Hook/LoginFormHook.php). Its script is not named in
+          # the page, because the backend concatenates and compresses its
+          # JavaScript whenever [BE][debug] is off (DocumentTemplate.php:412-414).
+          curl -fsS -A "$UA" "$BASE/typo3/index.php" -o be.html
+          grep -q 'id="typo3-login-form"' be.html
+          refute_php_errors_in be.html
+
+          # Reachable through typo3conf/ENABLE_INSTALL_TOOL, with no source edit.
+          # The old entry point answers a relative 303 to the new one
+          # (typo3/install/index.php), which -L follows.
+          curl -fsSL -A "$UA" "$BASE/typo3/install/" -o it.html
+          grep -q 'id="t3-install-form-password"' it.html
+          refute_php_errors_in it.html
+
+          # Source protection. 6.2 keeps three PHP files of configuration in
+          # typo3conf/, logs to typo3temp/logs/, and ships its own access rules
+          # in _.htaccess, which apache-typo3.conf ports. Denied by location, so
+          # 403 whether or not the file exists.
+          for path in typo3conf/LocalConfiguration.php typo3conf/PackageStates.php \
+                      typo3conf/AdditionalConfiguration.php typo3temp/logs/typo3.log \
+                      typo3/sysext/core/Configuration/DefaultConfiguration.php \
+                      composer.json ChangeLog; do
+            code=$(curl -s -o /dev/null -w '%{http_code}' -A "$UA" "$BASE/$path")
+            if [ "$code" != 403 ]; then
+              echo "::error::/$path answered $code, not 403"
+              exit 1
+            fi
+          done
+          test "$(curl -s -o /dev/null -w '%{http_code}' -A "$UA" "$BASE/typo3/gfx/alt_backend_logo.gif")" = 200
+          curl -sS -A "$UA" "$BASE/typo3/sysext/" -o dir.html
+          refute_in dir.html -i 'Index of /'
+
+          echo "smoke test passed"
+
+      # Logs in the way the form's JavaScript does, opens the backend, then opens
+      # and saves the seeded page. The 303 is asserted rather than followed:
+      # plain HTTP must answer http:// here, and the TLS phase https://.
+      - name: Backend login and record editing
+        run: |
+          set -euo pipefail
+          # Name the command that failed. Several of these checks are greps that
+          # would otherwise end the step with nothing but an exit code.
+          set -E
+          trap 'echo "::error::failed: $BASH_COMMAND"' ERR
+          . .github/scripts/ci-assert.sh
+          . 6.2/ci-login.sh
+          login_and_expect "http://127.0.0.1:8062/typo3/backend.php"
+
+          curl -fsS -A "$UA" -b jar "$BASE/typo3/backend.php" -o backend.html
+          # The absolute body URL, in its plain-HTTP form: the negative
+          # control for the TLS phase.
+          grep -qF '"siteUrl":"http:\/\/127.0.0.1:8062\/"' backend.html
+          refute_php_errors_in backend.html
+
+          edit_url="$BASE/typo3/alt_doc.php?returnUrl=dummy.php&edit%5Bpages%5D%5B1%5D=edit"
+          code=$(curl -sS -A "$UA" -b jar -o edit.html -w '%{http_code}' "$edit_url")
+          if [ "$code" != 200 ]; then
+            echo "::error::alt_doc.php answered $code, not 200"
+            exit 1
+          fi
+          if ! grep -qF "name=\"data[pages][1][title]\" value=\"${CHARSET_PROBE}\"" edit.html; then
+            echo "::error::alt_doc.php did not render the probe in the title field ($(wc -c < edit.html) bytes)"
+            grep -o 'name="data\[pages\]\[1\]\[title\]"[^>]*' edit.html | head -3 || head -c 2000 edit.html
+            exit 1
+          fi
+          refute_php_errors_in edit.html
+
+          # Saving, as the form does: doSave, the form's own editRecord token
+          # (typo3/alt_doc.php checks it before anything is processed), and a
+          # Referer on this host (EditDocumentController.php:504-506).
+          token=$(grep -oE 'name="formToken" value="[0-9a-f]+"' edit.html | head -1 | grep -oE '[0-9a-f]{20,}')
+          test -n "$token"
+          code=$(curl -sS -A "$UA" -b jar -e "$edit_url" -o saved.html -w '%{http_code}' \
+            --data-urlencode "data[pages][1][title]=${CHARSET_PROBE_SAVED}" \
+            -d doSave=1 -d "formToken=$token" "$edit_url")
+          if [ "$code" != 200 ]; then
+            echo "::error::saving through alt_doc.php answered $code, not 200"
+            exit 1
+          fi
+          grep -qF "name=\"data[pages][1][title]\" value=\"${CHARSET_PROBE_SAVED}\"" saved.html
+          refute_php_errors_in saved.html
+
+          # What DataHandler wrote, read from MySQL itself: UTF-8 bytes, so C3B8
+          # for the ø, and three bytes for each kanji.
+          expected=$(python3 -I -c 'import os, sys; print(os.fsencode(sys.argv[1]).hex().upper())' "$CHARSET_PROBE_SAVED")
+          stored=$($COMPOSE exec -T db mysql -utypo3 -ptypo3 -N -B -e 'SELECT HEX(title) FROM pages WHERE uid = 1' typo3)
+          if [ "$stored" != "$expected" ]; then
+            echo "::error::pages.title holds 0x$stored, expected 0x$expected"
+            exit 1
+          fi
+
+          curl -fsS -A "$UA" "$BASE/?no_cache=1" -o fe-saved.html
+          grep -qF "<p id=\"charset-probe\">${CHARSET_PROBE_SAVED}</p>" fe-saved.html
+          refute_php_errors_in fe-saved.html
+          echo "backend login and record editing passed"
+
+      # 4.5's Ext.Direct step and its three-phase control, unchanged in shape:
+      #
+      #   1. as shipped: the page tree answers, as JSON, with the seeded page
+      #   2. every display setting on over the shipped ini: still clean
+      #   3. only always_populate_raw_post_data = 0 changed: the deprecation leads
+      #      the reply, the JSON stops parsing, and PHP's own headers are lost
+      #
+      # The typo3-4-5 job's comments carry the reasons for each part of it.
+      - name: Ext.Direct, and PHP 5.6's raw-POST deprecation
+        run: |
+          set -euo pipefail
+          # Name the command that failed. Several of these checks are greps that
+          # would otherwise end the step with nothing but an exit code.
+          set -E
+          trap 'echo "::error::failed: $BASH_COMMAND"' ERR
+          . .github/scripts/ci-assert.sh
+          . 6.2/ci-login.sh
+          . 6.2/ci-extdirect.sh
+
+          login_and_expect "http://127.0.0.1:8062/typo3/backend.php"
+          read_extdirect_token
+
+          code=$(call_page_tree tree.json)
+          test "$code" = 200 || { echo "::error::ajax.php answered $code"; head -c 1000 tree.json; exit 1; }
+          python3 -I 6.2/ci-check-page-tree.py tree.json "$CHARSET_PROBE_SAVED"
+          refute_php_errors_in tree.json
+
+          apply_control() {
+            expose="$1"
+            shift
+            printf '%s\n' "expose_php = $expose" 'error_reporting = E_ALL' \
+                'display_errors = On' 'display_startup_errors = On' 'html_errors = Off' "$@" \
+              | $COMPOSE exec -T web sh -c \
+                  'cat > /usr/local/etc/php/conf.d/zzz-ci-control.ini && apache2ctl -k graceful'
+            for i in $(seq 1 30); do
+              curl -sS -o /dev/null -D control.headers "$BASE/" || true
+              if grep -qi '^x-powered-by:' control.headers; then seen=On; else seen=Off; fi
+              [ "$seen" = "$expose" ] && return 0
+              sleep 1
+            done
+            echo "::error::Apache did not pick up the control settings (expose_php still not $expose)"
+            exit 1
+          }
+          RAW_POST_DEPRECATION='Automatically populating $HTTP_RAW_POST_DATA'
+
+          apply_control Off
+          call_page_tree tree-displayed.json > /dev/null
+          served_with_expose_php tree-displayed.json Off
+          refute_in tree-displayed.json -F "$RAW_POST_DEPRECATION"
+          python3 -I 6.2/ci-check-page-tree.py tree-displayed.json "$CHARSET_PROBE_SAVED"
+          echo "with every display on and the shipped -1, the reply is clean"
+
+          apply_control On 'always_populate_raw_post_data = 0'
+          call_page_tree tree-control.json > /dev/null
+          if ! grep -qF "$RAW_POST_DEPRECATION" tree-control.json; then
+            echo "::error::with always_populate_raw_post_data = 0 the deprecation never appeared, so phase 2 proved nothing"
+            head -c 1000 tree-control.json
+            exit 1
+          fi
+          if python3 -I -c 'import json, sys; json.load(open(sys.argv[1]))' tree-control.json 2>/dev/null; then
+            echo "::error::the deprecation appeared but the reply still parses"
+            exit 1
+          fi
+          if grep -qi '^x-powered-by:' tree-control.json.headers; then
+            echo "::error::X-Powered-By survived the deprecation; PHP's headers went out before it"
+            exit 1
+          fi
+          echo "control: with the setting at 0, the deprecation leads the reply, breaks the JSON and costs PHP its own headers"
+
+          $COMPOSE exec -T web sh -c 'rm /usr/local/etc/php/conf.d/zzz-ci-control.ini && apache2ctl -k graceful'
+          for i in $(seq 1 30); do
+            call_page_tree tree-restored.json > /dev/null || true
+            python3 -I 6.2/ci-check-page-tree.py tree-restored.json "$CHARSET_PROBE_SAVED" > /dev/null 2>&1 && break
+            sleep 1
+          done
+          python3 -I 6.2/ci-check-page-tree.py tree-restored.json "$CHARSET_PROBE_SAVED"
+          echo "Ext.Direct passed"
+
+      # 4.5's TLS phase. web and edge are recreated with HTTPS=on; typo3conf/ is
+      # a volume, so the installer's configuration survives that, as the database
+      # does. What it proves: SetEnv reaches TYPO3_SSL, redirects and siteUrl
+      # switch to https://, and trustedHostsPattern '.*' keeps 6.2 answering
+      # once it believes it is on 443 while Apache reports 80. The loopback proxy
+      # forwards plain HTTP and rewrites nothing, so a real TLS proxy is still
+      # unexercised.
+      - name: Behind TLS
+        run: |
+          set -euo pipefail
+          # Name the command that failed. Several of these checks are greps that
+          # would otherwise end the step with nothing but an exit code.
+          set -E
+          trap 'echo "::error::failed: $BASH_COMMAND"' ERR
+          . .github/scripts/ci-assert.sh
+          . 6.2/ci-login.sh
+
+          # The negative control first: an unauthenticated backend.php is sent to
+          # the login (BackendUserAuthentication.php:2359), absolutely.
+          location=$(curl -sS -A "$UA" -o /dev/null -D - "$BASE/typo3/backend.php" \
+            | tr -d '\r' | sed -n 's/^[Ll]ocation: //p')
+          if [ "$location" != "http://127.0.0.1:8062/typo3/" ]; then
+            echo "::error::backend.php redirected to '$location' before TLS was switched on"
+            exit 1
+          fi
+
+          TYPO3_BEHIND_TLS=1 $COMPOSE up -d --no-build --force-recreate web edge
+
+          for i in $(seq 1 60); do
+            curl -fsS --max-time 5 "$BASE/" >/dev/null 2>&1 && break
+            sleep 5
+          done
+          $COMPOSE logs web > web-tls.log
+          grep -q 'told it sits behind TLS' web-tls.log
+          # The recreated container found the installer's configuration on the
+          # volume and did not install again.
+          refute_in web-tls.log 'starting apache in the background for the installer'
+
+          curl -fsS -A "$UA" "$BASE/" -o fe-tls.html
+          grep -q '<h1>TYPO3 6.2.31</h1>' fe-tls.html
+          refute_php_errors_in fe-tls.html
+
+          location=$(curl -sS -A "$UA" -o /dev/null -D - "$BASE/typo3/backend.php" \
+            | tr -d '\r' | sed -n 's/^[Ll]ocation: //p')
+          if [ "$location" != "https://127.0.0.1:8062/typo3/" ]; then
+            echo "::error::backend.php redirected to '$location', not to https://"
+            exit 1
+          fi
+
+          curl -fsS -A "$UA" "$BASE/typo3/index.php" -o be-tls.html
+          grep -q 'id="typo3-login-form"' be-tls.html
+          refute_in be-tls.html 'trusted hosts pattern'
+
+          login_and_expect "https://127.0.0.1:8062/typo3/backend.php"
+
+          curl -fsS -A "$UA" -b jar "$BASE/typo3/backend.php" -o backend-tls.html
+          grep -qF '"siteUrl":"https:\/\/127.0.0.1:8062\/"' backend-tls.html
+          echo "behind-TLS phase passed"
+
+      - name: Show logs on failure
+        if: failure()
+        run: $COMPOSE logs
+
+      - name: Tear down
+        if: always()
+        run: $COMPOSE down -v
+
+      # Only when the image itself changed, for the reason the 3.3 job gives.
+      - name: Publish typo3:6.2.31
+        if: env.PUBLISH == 'true' && needs.changes.outputs.image_6_2 == 'true'
+        run: |
+          docker push "${TYPO3_IMAGE}:6.2.31"
+          docker push "${TYPO3_IMAGE}:6.2.31-sha-${GITHUB_SHA}"

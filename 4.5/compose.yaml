@@ -1,0 +1,150 @@
+# TYPO3 4.5.40 — the final release of the first LTS branch (2015-02-19), on
+# PHP 5.6.40 with MySQL 5.5.
+#
+#   docker compose -f 4.5/compose.yaml up -d
+#   open http://127.0.0.1:8045/
+#   docker compose -f 4.5/compose.yaml down -v
+#
+# Self-contained like 3.8/compose.yaml, and with the same knobs (TYPO3_PROVISION,
+# TYPO3_ADMIN_PASSWORD, THROWBACK_MIRROR) plus THROWBACK_PORT_45 and
+# TYPO3_BEHIND_TLS. 3.3/compose.yaml explains the shared ones, and this file only
+# explains what differs for 4.5. Inline configs need Docker Compose 2.23.1 or
+# newer.
+#
+# Why each pin is what it is: docs/how-it-works.md.
+#
+# Like 3.8, `up -d --build` works in one step from a checkout: this image starts
+# from the same official php:5.6-apache digest.
+#
+# Never publish this stack beyond loopback: a 2015 core whose branch has had no
+# security release since, with known remote code execution issues. `web` and `db`
+# have no egress; only `edge` has a port.
+
+name: typo3-45
+
+services:
+  web:
+    image: ghcr.io/mteu/typo3-throwback/typo3:4.5.40
+    # amd64 for 3.8's reason: LD_PRELOAD in the Dockerfile points into
+    # /usr/lib/x86_64-linux-gnu.
+    platform: linux/amd64
+    pull_policy: missing
+    build:
+      context: ..
+      dockerfile: 4.5/Dockerfile
+    networks:
+      - isolated
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      TYPO3_DB_HOST: db
+      TYPO3_DB_NAME: typo3
+      TYPO3_DB_USER: typo3
+      TYPO3_DB_PASSWORD: typo3
+      TYPO3_SITENAME: TYPO3 4.5.40
+
+      # auto or wizard, as in 3.8. The wizard is at
+      # http://127.0.0.1:8045/typo3/install/index.php?mode=123&step=1
+      TYPO3_PROVISION: ${TYPO3_PROVISION:-auto}
+
+      TYPO3_ADMIN_USER: admin
+      TYPO3_ADMIN_PASSWORD: ${TYPO3_ADMIN_PASSWORD:-password}
+      # joh316 is the historical TYPO3 default.
+      TYPO3_INSTALL_PASSWORD: joh316
+
+      # 1 tells TYPO3 it sits behind TLS (HTTPS=on in Apache). 4.5's redirects and
+      # the backend's siteUrl are absolute, so behind a TLS-terminating proxy they
+      # would otherwise point at http://. Off
+      # by default, because this stack is plain HTTP and its redirects would then
+      # point at an https:// that nothing answers. CI recreates the service with
+      # it on:
+      #
+      #   TYPO3_BEHIND_TLS=1 docker compose -f 4.5/compose.yaml up -d --force-recreate web edge
+      TYPO3_BEHIND_TLS: ${TYPO3_BEHIND_TLS:-0}
+
+      # The frozen clock lives in the Dockerfile, as in 3.8: this image belongs to
+      # one version, so its release date belongs in it.
+
+  db:
+    # The same mysql:5.5 digest as every other stack. No --old-passwords, for
+    # 3.8's reason: PHP 5.6 talks mysqlnd.
+    image: ${THROWBACK_MIRROR:-ghcr.io/mteu/typo3-throwback}/mysql@sha256:12da85ab88aedfdf39455872fb044f607c32fdc233cd59f1d26769fbf439b045
+    platform: linux/amd64
+    # Start as uid 999 rather than root so the image survives emulation; the long
+    # version of why is in 3.3/compose.yaml.
+    user: "999:999"
+    networks:
+      - isolated
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: typo3
+      MYSQL_USER: typo3
+      MYSQL_PASSWORD: typo3
+    command:
+      # Whether 4.5 is strict-clean has not been checked. Empty is mysql:5.5's own
+      # default; stated so the question cannot arise.
+      - --sql-mode=
+      # The line that differs from 3.3, 3.8 and 4.0, and the one that would do
+      # damage if copied from them. 4.5 connects with SET NAMES utf8, and neither
+      # its schema nor the Install Tool's CREATE DATABASE names a charset, so every
+      # table takes this default. Under the latin1 the older stacks pin, every
+      # character outside latin1 is stored as "?" with nothing but a warning.
+      # provision.php refuses to start on
+      # anything but utf8 and proves the round trip.
+      #
+      # Not utf8mb4: 4.5 predates it, and an emoji typed into it is truncated at
+      # that character. That is 2015 behaviour and it stays.
+      - --character-set-server=utf8
+      - --collation-server=utf8_general_ci
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-u", "typo3", "-ptypo3"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+
+  edge:
+    # The only container with a published port, for the reason 3.3/compose.yaml
+    # gives: an internal network blocks published ports as well as egress.
+    image: ${THROWBACK_MIRROR:-ghcr.io/mteu/typo3-throwback}/nginx@sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10
+    networks:
+      - isolated
+      - published
+    ports:
+      # 8045 is port 80 plus the version, matching 8033, 8038 and 8040.
+      - "127.0.0.1:${THROWBACK_PORT_45:-8045}:80"
+    configs:
+      - source: loopback-proxy
+        target: /etc/nginx/conf.d/default.conf
+    depends_on:
+      - web
+
+configs:
+  loopback-proxy:
+    # `$$` is Compose's escape for a literal `$`; nginx sees `$http_host`.
+    content: |
+      server {
+          listen 80 default_server;
+          server_name _;
+
+          # TYPO3 builds absolute URLs and redirects from HTTP_HOST, so the
+          # original Host header has to survive the hop.
+          proxy_set_header Host $$http_host;
+          proxy_set_header X-Forwarded-For $$proxy_add_x_forwarded_for;
+
+          client_max_body_size 32m;
+
+          location / {
+              proxy_pass http://web:80;
+              proxy_read_timeout 300s;
+          }
+      }
+
+networks:
+  isolated:
+    internal: true
+  published:
+
+# As in 3.3: the mysql image declares its own anonymous volume, so tear down with
+# `down -v` between runs, or `up -d -V` to force a fresh datadir in place.

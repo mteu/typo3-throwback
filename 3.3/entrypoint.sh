@@ -1,0 +1,173 @@
+#!/bin/sh
+#
+# Boot order: make the writable trees writable, generate localconf.php, let the
+# PHP 4 CLI settle the database, then start the FastCGI listener and nginx.
+#
+# "Settle" rather than "provision" because TYPO3_PROVISION decides what that means
+# — import, leave empty for the 1-2-3 wizard, or check a datadir that was baked
+# ahead of time. 3.3/provision.php documents the three.
+set -eu
+
+DOCROOT=/var/www/html
+PHP_BIN=/opt/php4/bin
+PHP_INI=/opt/php4/lib/php.ini
+
+: "${TYPO3_DB_HOST:=db}"
+: "${TYPO3_DB_NAME:=typo3}"
+: "${TYPO3_DB_USER:=typo3}"
+: "${TYPO3_DB_PASSWORD:=typo3}"
+: "${TYPO3_SITENAME:=TYPO3 3.3.0}"
+: "${TYPO3_INSTALL_PASSWORD:=joh316}"
+: "${TYPO3_PROVISION:=auto}"
+: "${PHP_FCGI_CHILDREN:=4}"
+: "${PHP_FCGI_MAX_REQUESTS:=500}"
+
+export TYPO3_DB_HOST TYPO3_DB_NAME TYPO3_DB_USER TYPO3_DB_PASSWORD TYPO3_PROVISION
+export PHP_FCGI_CHILDREN PHP_FCGI_MAX_REQUESTS
+
+# preprovisioned is for a database image whose datadir already carries the end
+# state an auto run would reach, so provision.php checks the pairing and imports
+# nothing. It is not a default: 3.3/compose.yaml runs this image against a plain
+# mysql:5.5, where there is nothing baked to find.
+case "$TYPO3_PROVISION" in
+    auto|wizard|preprovisioned) ;;
+    *)
+        echo "[entrypoint] ERROR: TYPO3_PROVISION must be 'auto', 'wizard' or 'preprovisioned', got '$TYPO3_PROVISION'" >&2
+        exit 1
+        ;;
+esac
+
+# These four are the only trees TYPO3 writes to. They are baked into the image
+# rather than mounted as volumes — see the note in compose.yaml — but the
+# chown is kept so a bind mount for debugging still comes up usable.
+for dir in typo3conf typo3temp fileadmin uploads; do
+    mkdir -p "$DOCROOT/$dir"
+    chown -R www-data:www-data "$DOCROOT/$dir"
+done
+
+# typo3/temp/ is the fifth writable tree, and the one that is easy to miss: it
+# sits *inside* the source tree under /opt rather than in the document root, so a
+# hardening pass that walks the document root will not find it. The backend
+# renders its chrome there.
+#
+# Under a read-only root filesystem it has to be a tmpfs, which starts empty — so
+# the GIFs the 2002 tarball ships are restored from the copy the image keeps
+# outside the mount. Without them the backend regenerates all 56 it needs on the
+# first click, which works but is neither fast nor faithful.
+TEMP_DIR=/opt/typo3_src-3.3.0/typo3/temp
+if [ -d /opt/typo3-temp-seed ] && [ -z "$(ls -A "$TEMP_DIR" 2>/dev/null)" ]; then
+    cp -a /opt/typo3-temp-seed/. "$TEMP_DIR/"
+fi
+chown -R www-data:www-data "$TEMP_DIR"
+
+# And it has to be writable, which is worth failing loudly over rather than
+# discovering in the interface.
+#
+# t3lib_install::checkDirs() touch-tests this directory and reports a type-3
+# message when it cannot write. message() turns type 3 into fatalError, and
+# fatalError suppresses the "Step 2: install the database" link on step 1 of the
+# 1-2-3 wizard (t3lib/class.t3lib_install.php:261). The wizard then dead-ends on
+# "Fatal error encountered!" with no way forward — which reads as a TYPO3 problem
+# and is really a mount that was never declared.
+if ! touch "$TEMP_DIR/.writable" 2>/dev/null; then
+    echo "[entrypoint] ERROR: $TEMP_DIR is not writable." >&2
+    echo "[entrypoint] The backend renders its chrome there and the Install Tool" >&2
+    echo "[entrypoint] refuses to proceed without it, so the 1-2-3 wizard would" >&2
+    echo "[entrypoint] dead-end at step 1. Under a read-only root filesystem this" >&2
+    echo "[entrypoint] path must be mounted as a writable tmpfs." >&2
+    exit 1
+fi
+rm -f "$TEMP_DIR/.writable"
+
+# --- localconf.php ---------------------------------------------------------
+# t3lib/config_default.php:140 hard-die()s if typo3conf/localconf.php is absent,
+# so this file has to exist before *anything* runs — including the 1-2-3 install
+# wizard. In 2002 it arrived with the separate "dummy" package, which is no
+# longer distributed for 3.3.0, so it is generated here.
+#
+# Written once and then left alone: the Install Tool edits this same file
+# (t3lib_install::allowUpdateLocalConf), and regenerating it on every boot would
+# silently discard those edits.
+LOCALCONF="$DOCROOT/typo3conf/localconf.php"
+if [ ! -f "$LOCALCONF" ]; then
+    # The Install Tool authenticates against an md5 of the cleartext
+    # (t3lib/class.t3lib_install.php:171). joh316 is the historical TYPO3
+    # default — its hash is quoted verbatim in the source's own "Install Tool
+    # deactivated" message at line 106.
+    INSTALL_HASH=$(printf '%s' "$TYPO3_INSTALL_PASSWORD" | md5sum | cut -d' ' -f1)
+
+    if [ "$TYPO3_PROVISION" = wizard ]; then
+        # Wizard mode: the minimum that lets typo3/install/ start, and nothing
+        # more. Step 1 of the 1-2-3 wizard collects the database settings and
+        # writes them into this file itself, which is the point of running it.
+        echo "[entrypoint] writing stub typo3conf/localconf.php (wizard mode)"
+        cat > "$LOCALCONF" <<EOF
+<?php
+// Generated by 3.3/entrypoint.sh on first boot, in wizard mode.
+// Deliberately minimal: the 1-2-3 install wizard fills in the rest.
+\$TYPO3_CONF_VARS['BE']['installToolPassword'] = '${INSTALL_HASH}';
+?>
+EOF
+    else
+        echo "[entrypoint] writing typo3conf/localconf.php"
+        cat > "$LOCALCONF" <<EOF
+<?php
+// Generated by 3.3/entrypoint.sh on first boot.
+// Edit freely — this file is only created when it does not already exist.
+
+\$typo_db_username = '${TYPO3_DB_USER}';
+\$typo_db_password = '${TYPO3_DB_PASSWORD}';
+\$typo_db_host     = '${TYPO3_DB_HOST}';
+\$typo_db          = '${TYPO3_DB_NAME}';
+
+\$TYPO3_CONF_VARS['SYS']['sitename'] = '${TYPO3_SITENAME}';
+\$TYPO3_CONF_VARS['BE']['installToolPassword'] = '${INSTALL_HASH}';
+
+// Image processing. TYPO3 3.3 shipped expecting ImageMagick 4.2.9, so the
+// defaults point at /usr/X11R6/bin and call the compositing tool "combine".
+// Debian ships ImageMagick 6 in /usr/bin, where that tool is "composite".
+\$TYPO3_CONF_VARS['GFX']['image_processing']    = 1;
+\$TYPO3_CONF_VARS['GFX']['im_path']             = '/usr/bin/';
+\$TYPO3_CONF_VARS['GFX']['im_path_lzw']         = '/usr/bin/';
+\$TYPO3_CONF_VARS['GFX']['im_version_5']        = 1;
+\$TYPO3_CONF_VARS['GFX']['im_combine_filename'] = 'composite';
+
+// Upstream also lists pdf and ai here. Debian's ImageMagick denies the PS/PDF
+// coders in /etc/ImageMagick-6/policy.xml (the 2018 Ghostscript CVEs) and no
+// ghostscript delegate is installed, so those two are dropped rather than left
+// advertised-but-broken. To enable them: install ghostscript, remove the PS/PDF
+// "rights=none" lines from that policy file, and add pdf,ai back to this list.
+\$TYPO3_CONF_VARS['GFX']['imagefile_ext'] = 'gif,jpg,jpeg,tif,bmp,pcx,tga,png';
+
+// PHP 4's bundled GD 2.0.28 still writes GIF, which is what GIFBUILDER wants,
+// so there is no need to switch the output format to PNG.
+\$TYPO3_CONF_VARS['GFX']['gdlib']     = 1;
+\$TYPO3_CONF_VARS['GFX']['gdlib_png'] = 0;
+?>
+EOF
+    fi
+
+    chown www-data:www-data "$LOCALCONF"
+    # The Install Tool rewrites this file in place, so the owner needs write.
+    chmod 0640 "$LOCALCONF"
+fi
+
+# --- database --------------------------------------------------------------
+# Always waits for the server. In auto mode it then imports the schema and seeds
+# content; in preprovisioned mode it instead checks that the baked datadir carries
+# both already, and refuses to start the stack if it does not.
+#
+# The wait is what keeps the two halves in step either way: nginx does not listen
+# until this returns, so the first request cannot arrive before
+# TYPO3 has a database to answer from.
+"$PHP_BIN/php-cli" -c "$PHP_INI" /usr/local/share/typo3/provision.php
+
+# --- serve -----------------------------------------------------------------
+# PHP 4 has no process manager: the cgi-fcgi SAPI forks PHP_FCGI_CHILDREN
+# workers itself and we background the whole thing behind nginx.
+echo "[entrypoint] starting php-cgi (FastCGI) on 127.0.0.1:9000"
+setpriv --reuid=www-data --regid=www-data --init-groups \
+    "$PHP_BIN/php-cgi" -c "$PHP_INI" -b 127.0.0.1:9000 &
+
+echo "[entrypoint] starting nginx"
+exec nginx -g 'daemon off;'

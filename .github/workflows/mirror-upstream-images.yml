@@ -1,0 +1,150 @@
+# Mirrors the third-party base images this repository pins into its own GHCR
+# namespace, so the stacks survive upstream deletion.
+#
+# The risk this closes is specific and real: `mysql:5.5` reached end of life in
+# 2018 and its digest is pinned here precisely because nothing upstream promises
+# to keep it. Docker Hub has removed or garbage-collected long-dead official tags
+# before, and a stack whose database vanishes is not reproducible in any
+# useful sense — which is the entire premise of vendor-src/ applied one layer
+# down. Mirroring makes it ours.
+#
+# The copy is byte-for-byte. `--preserve-digests` fails the job rather than
+# rewriting anything, so the mirrored image carries the *same* digest as the
+# upstream one and the pin in 3.3/compose.yaml keeps its meaning
+# after the registry hostname changes. That is the whole design: a mirror whose
+# content you have to re-verify by hand is not a mirror, it is a second thing to
+# distrust.
+#
+# The cost of that guarantee: no org.opencontainers.image.source label can be
+# added here, since any edit to the manifest changes the digest. Packages pushed
+# with GITHUB_TOKEN are linked to the publishing repository by GitHub anyway and
+# inherit its access, same as the TYPO3 images.
+#
+# Re-running is cheap and idempotent — skopeo skips blobs the destination already
+# has — so the monthly schedule doubles as a check that upstream has not
+# disappeared yet, while there is still time to notice.
+
+name: mirror upstream images
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Monthly. Frequent enough to notice an upstream removal, rare enough not to
+    # spend anonymous Docker Hub pull quota on it.
+    - cron: '17 4 1 * *'
+  push:
+    paths:
+      - '.github/workflows/mirror-upstream-images.yml'
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: mirror-upstream-images
+  cancel-in-progress: false
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+
+    strategy:
+      # Each image is independent; one upstream disappearing should not hide the
+      # status of the others.
+      fail-fast: false
+      matrix:
+        include:
+          # The set below is every docker.io image the repository pins, so that
+          # `3.3` can both run and rebuild with Docker Hub unreachable.
+          # Tags here name what the digest actually is; the digest stays the
+          # authority.
+
+          # --- required to RUN 3.3 ---
+
+          # 3.3 db. The urgent one: end of life in 2018, never published
+          # for arm64, and not re-rollable to a newer 5.x — PHP 4's bundled
+          # libmysqlclient 3.23 needs the pre-4.1 auth protocol, which 5.7 removed.
+          - name: mysql
+            tag: '5.5'
+            source: docker.io/library/mysql@sha256:12da85ab88aedfdf39455872fb044f607c32fdc233cd59f1d26769fbf439b045
+          # 3.3 edge. Actively maintained upstream and trivially
+          # re-rollable, unlike the rest of this list — mirrored anyway, because
+          # "the stack runs without Docker Hub" is only true if it covers every
+          # service, and a proxy that cannot start stops the stack just as dead.
+          - name: nginx
+            tag: '1.27.5'
+            source: docker.io/library/nginx@sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10
+
+          # --- required to REBUILD php4-base from source ---
+          #
+          # Only needed when not pulling php4-base from GHCR, which is exactly the
+          # situation this mirror is insurance against. Both stages, because a
+          # build that can reach one and not the other gets nowhere.
+          - name: debian
+            tag: 'bullseye'
+            source: docker.io/library/debian@sha256:99cdf7792e25416bd801861ccd8e2fb27fb527b25e8d9a8704ebc3ead2015675
+          - name: debian
+            tag: 'bullseye-slim'
+            source: docker.io/library/debian@sha256:f313b4bd62667092a59b3a664d7d3ab8b5e65f41675f48e81455a15dc5abe792
+
+          # --- required to BUILD 3.8 ---
+          #
+          # php:5.6 is long past end of life and is the
+          # last PHP with ext/mysql, which is what 3.8.1's t3lib_db requires. If it
+          # is pruned, 3.8 has no runtime at all.
+          - name: php
+            tag: '5.6-apache'
+            source: docker.io/library/php@sha256:0a40fd273961b99d8afe69a61a68c73c04bc0caa9de384d3b2dd9e7986eec86d
+
+    steps:
+      - name: Install skopeo
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends skopeo
+
+      # --all copies every entry in the manifest list rather than just the
+      # runner's platform, so the mirror is not silently narrower than upstream.
+      # --preserve-digests turns any manifest rewrite into a job failure.
+      - name: Copy ${{ matrix.name }}:${{ matrix.tag }} to GHCR
+        env:
+          GHCR_USER: ${{ github.actor }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SOURCE: ${{ matrix.source }}
+          TARGET: ghcr.io/${{ github.repository }}/${{ matrix.name }}:${{ matrix.tag }}
+        run: |
+          set -euo pipefail
+          skopeo copy --all --preserve-digests \
+            --dest-creds "${GHCR_USER}:${GHCR_TOKEN}" \
+            "docker://${SOURCE}" \
+            "docker://${TARGET}"
+
+      # Belt and braces on top of --preserve-digests: assert independently that
+      # what is now in GHCR is the same object the compose file pins. This is the
+      # claim the mirror exists to make, so it gets checked rather than assumed.
+      - name: Verify the mirrored digest matches upstream
+        env:
+          GHCR_USER: ${{ github.actor }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SOURCE: ${{ matrix.source }}
+          TARGET: ghcr.io/${{ github.repository }}/${{ matrix.name }}:${{ matrix.tag }}
+        run: |
+          set -euo pipefail
+
+          # The pinned digest, taken from the source reference itself rather than
+          # from a second lookup, so upstream cannot move under the check.
+          expected="${SOURCE##*@}"
+
+          actual="$(skopeo inspect --raw \
+            --creds "${GHCR_USER}:${GHCR_TOKEN}" \
+            "docker://${TARGET}" | sha256sum | cut -d' ' -f1)"
+          actual="sha256:${actual}"
+
+          echo "expected (upstream pin): ${expected}"
+          echo "actual   (GHCR mirror) : ${actual}"
+
+          if [ "${expected}" != "${actual}" ]; then
+            echo "::error::mirrored digest does not match the pinned upstream digest"
+            exit 1
+          fi
+
+          echo "mirror is byte-identical to the pinned upstream image"
