@@ -1,0 +1,153 @@
+# TYPO3 6.2.31 — the last public release of the second LTS branch (2017-04-18), on
+# PHP 5.6.40 with MySQL 5.5.
+#
+#   docker compose -f 6.2/compose.yaml up -d
+#   open http://127.0.0.1:8062/
+#   docker compose -f 6.2/compose.yaml down -v
+#
+# Self-contained like 4.5/compose.yaml, with THROWBACK_MIRROR,
+# TYPO3_ADMIN_PASSWORD, THROWBACK_PORT_62 and TYPO3_BEHIND_TLS. 3.3/compose.yaml
+# explains the shared ones, and this file only explains what differs for 6.2.
+# Inline configs need Docker Compose 2.23.1 or newer.
+#
+# Two things differ from every older stack. The first boot runs 6.2's own step
+# installer, which takes most of a minute rather than seconds, and typo3conf/ is
+# a volume. There is no TYPO3_PROVISION: 6.2 cannot be left uninstalled and then
+# booted, so the installer always runs (docs/how-it-works.md).
+#
+# Why each pin is what it is: docs/how-it-works.md.
+#
+# Like 3.8, `up -d --build` works in one step from a checkout: this image starts
+# from the same official php:5.6-apache digest.
+#
+# Never publish this stack beyond loopback: a 2017 core from a branch whose public
+# support has ended, with known remote code execution issues. `web` and `db` have
+# no egress; only `edge` has a port.
+
+name: typo3-62
+
+services:
+  web:
+    image: ghcr.io/mteu/typo3-throwback/typo3:6.2.31
+    # amd64 for 3.8's reason: LD_PRELOAD in the Dockerfile points into
+    # /usr/lib/x86_64-linux-gnu.
+    platform: linux/amd64
+    pull_policy: missing
+    build:
+      context: ..
+      dockerfile: 6.2/Dockerfile
+    networks:
+      - isolated
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      TYPO3_DB_HOST: db
+      TYPO3_DB_NAME: typo3
+      TYPO3_DB_USER: typo3
+      TYPO3_DB_PASSWORD: typo3
+      TYPO3_SITENAME: TYPO3 6.2.31
+      TYPO3_ADMIN_USER: admin
+      # The installer requires eight characters or more and makes this the
+      # Install Tool's password too (DatabaseData.php, execute()), so there is no
+      # separate TYPO3_INSTALL_PASSWORD as in the older stacks.
+      TYPO3_ADMIN_PASSWORD: ${TYPO3_ADMIN_PASSWORD:-password}
+
+      # As in 4.5: 1 tells TYPO3 it sits behind TLS. Recreate web and edge to
+      # switch it:
+      #
+      #   TYPO3_BEHIND_TLS=1 docker compose -f 6.2/compose.yaml up -d --force-recreate web edge
+      TYPO3_BEHIND_TLS: ${TYPO3_BEHIND_TLS:-0}
+    volumes:
+      # New for 6.2. Every older stack generates its configuration from the
+      # environment on each fresh container, so recreating the web service (as
+      # the TLS switch above does) costs nothing. 6.2's configuration is the
+      # installer's output, LocalConfiguration.php and PackageStates.php, and the
+      # installer only runs into an empty database. So it has to live exactly as
+      # long as the database it describes: the db service's anonymous volume
+      # survives --force-recreate, and so does this. `down -v` removes both.
+      - typo3conf:/var/www/html/typo3conf
+
+  db:
+    # The same mysql:5.5 digest as every other stack. INSTALL.md asks for MySQL
+    # 5.1 to 5.6.
+    image: ${THROWBACK_MIRROR:-ghcr.io/mteu/typo3-throwback}/mysql@sha256:12da85ab88aedfdf39455872fb044f607c32fdc233cd59f1d26769fbf439b045
+    platform: linux/amd64
+    # Start as uid 999 rather than root so the image survives emulation; the long
+    # version of why is in 3.3/compose.yaml.
+    user: "999:999"
+    networks:
+      - isolated
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: typo3
+      MYSQL_USER: typo3
+      MYSQL_PASSWORD: typo3
+    command:
+      # Required, not just stated: INSTALL.md says strict mode "is currently not
+      # supported by TYPO3". mysql:5.5's default is already empty.
+      - --sql-mode=
+      # 4.5's pin. 6.2 connects with mysqli_set_charset('utf8')
+      # (DatabaseConnection.php:1204), and its installer, told to use the
+      # database the image created, creates every table without a charset, so
+      # they take this default. provision.php refuses anything but utf8 and
+      # proves the round trip.
+      - --character-set-server=utf8
+      - --collation-server=utf8_general_ci
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-u", "typo3", "-ptypo3"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+
+  edge:
+    # The only container with a published port, for the reason 3.3/compose.yaml
+    # gives: an internal network blocks published ports as well as egress.
+    image: ${THROWBACK_MIRROR:-ghcr.io/mteu/typo3-throwback}/nginx@sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10
+    networks:
+      - isolated
+      - published
+    ports:
+      # 8062 is port 80 plus the version, as for the others.
+      - "127.0.0.1:${THROWBACK_PORT_62:-8062}:80"
+    configs:
+      - source: loopback-proxy
+        target: /etc/nginx/conf.d/default.conf
+    depends_on:
+      - web
+
+configs:
+  loopback-proxy:
+    # `$$` is Compose's escape for a literal `$`; nginx sees `$http_host`.
+    content: |
+      server {
+          listen 80 default_server;
+          server_name _;
+
+          # TYPO3 builds absolute URLs and redirects from HTTP_HOST, so the
+          # original Host header has to survive the hop.
+          proxy_set_header Host $$http_host;
+          proxy_set_header X-Forwarded-For $$proxy_add_x_forwarded_for;
+
+          client_max_body_size 32m;
+
+          location / {
+              proxy_pass http://web:80;
+              proxy_read_timeout 300s;
+          }
+      }
+
+volumes:
+  typo3conf:
+
+networks:
+  isolated:
+    internal: true
+  published:
+
+# The mysql image declares its own anonymous volume, and typo3conf is a named one,
+# so tear down with `down -v` between runs. Unlike the older stacks, `up -d -V`
+# alone is not enough to start fresh: it renews anonymous volumes and keeps the
+# named typo3conf, whose configuration then describes a database that is gone.
+# provision.php refuses to start in that state and says why.

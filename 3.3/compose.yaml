@@ -1,0 +1,207 @@
+# TYPO3 3.3.0 — the oldest publicly available TYPO3 release (2002-06-03),
+# running on PHP 4.4.9 and MySQL 5.5.
+#
+#   docker compose -f 3.3/compose.yaml up -d
+#   open http://127.0.0.1:8033/
+#   docker compose -f 3.3/compose.yaml down -v
+#
+# This file is self-contained on purpose: the proxy config is inlined below, so
+# it runs from a lone download as well as from a checkout. Only `--build` needs
+# the checkout. Inline configs need Docker Compose 2.23.1 or newer.
+#
+# Why each pin is what it is: docs/how-it-works.md.
+#
+# Knobs, all optional, read from the environment or a .env file next to this one:
+#
+#   TYPO3_PROVISION       auto (default) or wizard — see `web` below
+#   TYPO3_ADMIN_PASSWORD  backend password for `admin`, default `password`
+#   THROWBACK_PORT_33     loopback port, default 8033
+#   THROWBACK_MIRROR      where mysql and nginx come from. Defaults to this
+#                         project's byte-identical GHCR mirror; set it to
+#                         docker.io/library to take them from Docker Hub. The
+#                         digests are the same either way, so this picks a host,
+#                         never a different image.
+#
+# Never publish this stack beyond loopback. TYPO3 3.3.0 carries two decades of
+# unpatched remote code execution issues. That is why `web` and `db` have no
+# network egress at all and only `edge` has a port, bound to 127.0.0.1.
+
+name: typo3-33
+
+services:
+  web:
+    image: ghcr.io/mteu/typo3-throwback/typo3:3.3.0
+    # The image is amd64-only (mysql:5.5 below never existed for arm64, so there
+    # is no point in a multi-arch build). Declaring it turns
+    #   no matching manifest for linux/arm64/v8 in the manifest list entries
+    # into transparent emulation on Apple Silicon. It also keeps `--build` honest:
+    # LD_PRELOAD below points into /usr/lib/x86_64-linux-gnu/, so a native arm64
+    # build would silently lose the faked clock.
+    platform: linux/amd64
+    # Prefer the published image; `up --build` still overrides.
+    pull_policy: missing
+    build:
+      # Repository root, so vendor-src/ is reachable. Only used with --build,
+      # which needs php4-base built first — see docs/building.md.
+      context: ..
+      dockerfile: 3.3/Dockerfile
+    networks:
+      - isolated
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      TYPO3_DB_HOST: db
+      TYPO3_DB_NAME: typo3
+      TYPO3_DB_USER: typo3
+      TYPO3_DB_PASSWORD: typo3
+      TYPO3_SITENAME: TYPO3 3.3.0
+
+      # auto   — import the schema and seed an admin user, a root page and a root
+      #          TypoScript template, so the stack boots to a rendering site with
+      #          no interaction.
+      # wizard — leave the database empty and walk the period-authentic 1-2-3
+      #          install wizard at
+      #          http://127.0.0.1:8033/typo3/install/index.php?mode=123&step=1
+      #          as a 2002 administrator would have.
+      #
+      # The entrypoint takes a third value, preprovisioned, which does not work
+      # here: it refuses to start unless the database image already carries a
+      # baked datadir, and the mysql:5.5 below is a plain one.
+      TYPO3_PROVISION: ${TYPO3_PROVISION:-auto}
+
+      TYPO3_ADMIN_USER: admin
+      TYPO3_ADMIN_PASSWORD: ${TYPO3_ADMIN_PASSWORD:-password}
+      # joh316 is the historical TYPO3 default — the source quotes its md5 in its
+      # own "Install Tool deactivated" message (t3lib/class.t3lib_install.php:106).
+      TYPO3_INSTALL_PASSWORD: joh316
+
+      # The clock starts at noon on 2002-06-03, the 3.3.0 release date, and runs
+      # from there. libfaketime is preloaded so nginx, php-cgi and the
+      # provisioning CLI all see that day, and the date on screen matches the
+      # version on screen.
+      #
+      # The leading @ is what lets it run. Without it the clock stands still, and
+      # 3.3 makes a session id from the clock alone
+      # (t3lib/class.t3lib_userauth.php:138): every new session got the same id,
+      # so a second browser arrived logged in as the first. CI showed that before
+      # the @ went in. The price is
+      # that two runs no longer render byte-identical pages: the seconds differ.
+      #
+      # Set here rather than in the image because php4-base is shared by every
+      # pre-PHP-5 release, so one release's date cannot be baked into it.
+      LD_PRELOAD: /usr/lib/x86_64-linux-gnu/faketime/libfaketime.so.1
+      FAKETIME: "@2002-06-03 12:00:00"
+
+  db:
+    # 5.5 is the newest MySQL that still speaks the pre-4.1 authentication
+    # protocol, which is the *only* protocol the libmysqlclient 3.23 bundled
+    # inside PHP 4 understands. 5.6 defaults secure_auth on; 5.7 removed the old
+    # password plugin outright. A hard floor, not a preference.
+    #
+    # End of life since 2018, which is why it is mirrored — see
+    # .github/workflows/mirror-upstream-images.yml. Same digest as
+    # docker.io/library/mysql@sha256:12da85ab…, byte for byte.
+    image: ${THROWBACK_MIRROR:-ghcr.io/mteu/typo3-throwback}/mysql@sha256:12da85ab88aedfdf39455872fb044f607c32fdc233cd59f1d26769fbf439b045
+    # Never published for arm64; this is what selects emulation there.
+    platform: linux/amd64
+    # Start as mysql (999:999) rather than root, which is what keeps this image
+    # startable under emulation.
+    #
+    # The entrypoint's root path ends in `exec gosu mysql …`, and that gosu is a
+    # 2017 Go binary whose runtime cannot create OS threads when amd64 is being
+    # emulated — it dies with "fatal error: newosproc" before mysqld ever runs,
+    # and compose reports only "container typo3-33-db-1 exited (2)". The
+    # entrypoint skips that branch when it is not root, so mysqld starts directly
+    # as uid 999 — the same end state, without the Go binary in front of it.
+    user: "999:999"
+    networks:
+      - isolated
+    command:
+      # Store passwords as 16-byte pre-4.1 hashes so the PHP 4 client can
+      # authenticate. Without this every connection fails with "Client does not
+      # support authentication protocol requested by server".
+      - --old-passwords=1
+      # TYPO3 3.3 is an iso-8859-1 application and its shipped dumps are latin1
+      # bytes. t3lib_db never issues SET NAMES, so the server default is what the
+      # connection gets; a utf8 server would mangle the import.
+      - --character-set-server=latin1
+      - --collation-server=latin1_swedish_ci
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: typo3
+      MYSQL_USER: typo3
+      MYSQL_PASSWORD: typo3
+    healthcheck:
+      # The 5.5 client inside the container has no trouble with the old hashes,
+      # and gives the web entrypoint a settled server to provision against.
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-u", "typo3", "-ptypo3"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+
+  edge:
+    # The only container with a published port. An internal network blocks
+    # published ports as well as egress, so `web` cannot be both reachable from
+    # the host and denied a route out. This proxy straddles both networks and
+    # runs no TYPO3 code, which keeps `web` and `db` fully egress-free.
+    #
+    # No `platform`: this digest is a real multi-arch list, and there is nothing
+    # to gain from emulating a reverse proxy. It talks to `web` over TCP, so a
+    # mixed-architecture stack is fine.
+    image: ${THROWBACK_MIRROR:-ghcr.io/mteu/typo3-throwback}/nginx@sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10
+    networks:
+      - isolated
+      - published
+    ports:
+      # Loopback only. Port 80 plus the version, like 3.8's 8038.
+      - "127.0.0.1:${THROWBACK_PORT_33:-8033}:80"
+    configs:
+      - source: loopback-proxy
+        target: /etc/nginx/conf.d/default.conf
+    depends_on:
+      - web
+
+configs:
+  loopback-proxy:
+    # `$$` is Compose's escape for a literal `$`; nginx sees `$http_host`.
+    content: |
+      server {
+          listen 80 default_server;
+          server_name _;
+
+          # TYPO3 3.x builds absolute URLs and redirects from HTTP_HOST, so the
+          # original Host header has to survive the hop or the backend bounces
+          # browsers to the internal service name.
+          proxy_set_header Host $$http_host;
+          proxy_set_header X-Forwarded-For $$proxy_add_x_forwarded_for;
+
+          client_max_body_size 32m;
+
+          location / {
+              proxy_pass http://web:80;
+              # The Install Tool's image tests and database import are slow on a
+              # 2002 codebase; do not time out before they finish.
+              proxy_read_timeout 300s;
+          }
+      }
+
+networks:
+  isolated:
+    # No egress for the 2002 core. See the warning at the top.
+    internal: true
+  published:
+    # Not internal, and deliberately carries only the proxy above.
+
+# No volumes are declared, and the db still gets one: the mysql image declares
+# `VOLUME /var/lib/mysql` itself, so Docker attaches an anonymous volume that
+# Compose reattaches on `--force-recreate` and plain `down` leaves behind. A
+# second `up` then finds a populated database, provision.php skips the import, and
+# you are not starting from scratch even though it looks like you are.
+#
+#   docker compose -f 3.3/compose.yaml down -v    # between runs
+#   docker compose -f 3.3/compose.yaml up -d -V   # or force a fresh datadir
+#
+# To keep a site on purpose, add named volumes for db:/var/lib/mysql and
+# web:/var/www/html/typo3conf; provision.php is idempotent and skips the import.

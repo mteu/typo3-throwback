@@ -1,0 +1,37 @@
+# Every Debian package the 3.8 image installs, by SHA-256. Written by
+# .github/scripts/lock-stretch-debs.sh, which checks each one against stretch's
+# signed Release; .github/workflows/stretch-debs.yml re-derives it and fails on
+# any difference. Change the package list here, never the lines below it.
+# packages: libfreetype6-dev libjpeg62-turbo-dev libpng-dev libfaketime imagemagick
+39c369b421244c9fee9d7eecf1b1ea98aced96e7799a148d98decb9e7cf55bdb  http://archive.debian.org/debian-security/pool/updates/main/f/freetype/libfreetype6-dev_2.6.3-3.2+deb9u2_amd64.deb
+1cf86bb3edd1612c105320ccc6a9f6c934a9f9dd8113ecad084d603cf7df5b92  http://archive.debian.org/debian-security/pool/updates/main/f/freetype/libfreetype6_2.6.3-3.2+deb9u2_amd64.deb
+c4faad62fe1d263db643ca891d6d7a2198741d55aff3ab5f0382d9350109a98b  http://archive.debian.org/debian-security/pool/updates/main/i/imagemagick/imagemagick-6-common_6.9.7.4+dfsg-11+deb9u14_all.deb
+5452817f7dba95c184280aa1c1818a83979742e32f96dd01c6b626ceec47a325  http://archive.debian.org/debian-security/pool/updates/main/i/imagemagick/imagemagick-6.q16_6.9.7.4+dfsg-11+deb9u14_amd64.deb
+f753a0bb953fdb288f299325861001b5c035e9d94dc8dde9b3a4328966e5c523  http://archive.debian.org/debian-security/pool/updates/main/i/imagemagick/imagemagick_6.9.7.4+dfsg-11+deb9u14_amd64.deb
+dfdaa0477e75982dc29a7d6e3a61129f65a4bd02ead8f726db796200704d9561  http://archive.debian.org/debian-security/pool/updates/main/i/imagemagick/libmagickcore-6.q16-3_6.9.7.4+dfsg-11+deb9u14_amd64.deb
+554a7193e7c5c846e9e510aab76773db5b1eb4cac3b4c14f137f6f4d4208c463  http://archive.debian.org/debian-security/pool/updates/main/i/imagemagick/libmagickwand-6.q16-3_6.9.7.4+dfsg-11+deb9u14_amd64.deb
+34d062375cae65ec0749f715a045ecb4d082d9d23cfe7eadf970e2327fcb7423  http://archive.debian.org/debian-security/pool/updates/main/libj/libjpeg-turbo/libjpeg62-turbo-dev_1.5.1-2+deb9u2_amd64.deb
+f089262dbf7b96571598cf5529a1a1a02ac3eed096503f2f3edb3d3f33d2c956  http://archive.debian.org/debian-security/pool/updates/main/libj/libjpeg-turbo/libjpeg62-turbo_1.5.1-2+deb9u2_amd64.deb
+033b3e19a070953e1f9c6e51b8e9a213612fb8c712443698ebcbd76ea99552d1  http://archive.debian.org/debian-security/pool/updates/main/libx/libx11/libx11-6_1.6.4-3+deb9u4_amd64.deb
+e44495b134b895702e62866934871ad9794490087f2dcbc4e7d420f922dfb61a  http://archive.debian.org/debian-security/pool/updates/main/libx/libx11/libx11-data_1.6.4-3+deb9u4_all.deb
+377ff4066871a258c7f9ffe005b6218958fd521050018339a6208c2c3d98d36c  http://archive.debian.org/debian-security/pool/updates/main/o/openjpeg2/libopenjp2-7_2.1.2-1.1+deb9u7_amd64.deb
+18d7b937f8c9976554c02fd6e18cc84c6b36ae088bb9b23509324999b2e72c93  http://archive.debian.org/debian-security/pool/updates/main/t/tiff/libtiff5_4.0.8-2+deb9u8_amd64.deb
+06d17675a6825394cae8c0dbd60652177fbb2758cbefc1004c71d3c8c5d01a5f  http://archive.debian.org/debian-security/pool/updates/main/z/zlib/zlib1g-dev_1.2.8.dfsg-5+deb9u1_amd64.deb
+c1359ed65905471cf9d25e5114ec2b7194b740ae28b9f1b20831d4c6f4c1cd28  http://archive.debian.org/debian-security/pool/updates/main/z/zlib/zlib1g_1.2.8.dfsg-5+deb9u1_amd64.deb
+550c419936073ab94075708ec265842752255c84d06d88216ce0d9101f49b3f3  http://archive.debian.org/debian/pool/main/f/faketime/libfaketime_0.9.6-7+b1_amd64.deb
+745f2e37714589ba3e7d2ef609780d582fc7ed9136626029cad333ef5519d38d  http://archive.debian.org/debian/pool/main/f/fftw3/libfftw3-double3_3.3.5-3_amd64.deb
+8226e3a525fef6aee3268929d15ed8352a7edfa263b8f70e3eb1a0962e772e27  http://archive.debian.org/debian/pool/main/f/fontconfig/fontconfig-config_2.11.0-6.7_all.deb
+8e4ac54fe770ff84c4b596e5e66dacc94efad08940fa354a8c112db06c67d588  http://archive.debian.org/debian/pool/main/f/fontconfig/libfontconfig1_2.11.0-6.7+b1_amd64.deb
+58d21a255606191e6512cca51f32c4480e7a798945cc980623377696acfa3cfc  http://archive.debian.org/debian/pool/main/f/fonts-dejavu/fonts-dejavu-core_2.37-1_all.deb
+ccad1133347b30513230c896e0072f58910affbbc8947e084d482bef6c5eea00  http://archive.debian.org/debian/pool/main/h/hicolor-icon-theme/hicolor-icon-theme_0.15-1_all.deb
+9646d69eefce505407bf0437ea12fb7c2d47a3fd4434720ba46b642b6dcfd80f  http://archive.debian.org/debian/pool/main/j/jbigkit/libjbig0_2.1-3.1+b2_amd64.deb
+18d45f638c1628790f72a6a4b6502cb3f542feecc0388e15d8f272d8f4c8c03b  http://archive.debian.org/debian/pool/main/l/lcms2/liblcms2-2_2.8-4+deb9u1_amd64.deb
+d8cb081e3371d8048ae8790bfd9ed19601b5442ecc0550ad2410a1b5916c6850  http://archive.debian.org/debian/pool/main/libl/liblqr/liblqr-1-0_0.4.2-2+b2_amd64.deb
+e9fbe5c7b445057e07108178c2edf112ce6bddaecd5103d1f2c4112879aefa28  http://archive.debian.org/debian/pool/main/libp/libpng1.6/libpng-dev_1.6.28-1+deb9u1_amd64.deb
+1d0b8014cba18f84ce77398da9db9c71e1a8ce53fd8157cd7bf9ccf1d56a42f4  http://archive.debian.org/debian/pool/main/libp/libpng1.6/libpng16-16_1.6.28-1+deb9u1_amd64.deb
+95311ecc8342b3660246f8c7d2a506a768878f521bb26ec7286551ddf275b6fc  http://archive.debian.org/debian/pool/main/libt/libtool/libltdl7_2.4.6-2_amd64.deb
+b03b2d0d400c2002a2d38300bd6630306abb0ff325c3d4a4447ecceb58335228  http://archive.debian.org/debian/pool/main/libx/libxau/libxau6_1.0.8-1_amd64.deb
+358ac6d450042d1792e3b2093ed73530774e6bd7600536a2acc327b83b201384  http://archive.debian.org/debian/pool/main/libx/libxcb/libxcb1_1.12-1_amd64.deb
+ecb8536f5fb34543b55bb9dc5f5b14c9dbb4150a7bddb3f2287b7cab6e9d25ef  http://archive.debian.org/debian/pool/main/libx/libxdmcp/libxdmcp6_1.1.2-3_amd64.deb
+724901105792e983bd0e7c2b46960cd925dd6a2b33b5ee999b4e80aaf624b082  http://archive.debian.org/debian/pool/main/libx/libxext/libxext6_1.3.3-1+b2_amd64.deb
+796a65e765d6045007175531d512c720f4eb04e7f3326b79b848bc6123947225  http://archive.debian.org/debian/pool/main/u/ucf/ucf_3.0036_all.deb

@@ -1,0 +1,139 @@
+# TYPO3 3.8.1 — the last release before 4.0 (2005-11-14), running on the newest
+# PHP it can: 5.6.40, with MySQL 5.5.
+#
+#   docker compose -f 3.8/compose.yaml up -d
+#   open http://127.0.0.1:8038/
+#   docker compose -f 3.8/compose.yaml down -v
+#
+# Self-contained like 3.3/compose.yaml, and with the same knobs (TYPO3_PROVISION,
+# TYPO3_ADMIN_PASSWORD, THROWBACK_MIRROR) plus THROWBACK_PORT_38. The header of
+# that file explains them. Inline configs need Docker Compose 2.23.1 or newer.
+#
+# Why each pin is what it is: docs/how-it-works.md.
+#
+# Unlike 3.3, `up -d --build` works in one step from a checkout: this image
+# starts from an official php:5.6-apache digest, so there is no base to build
+# first.
+#
+# Never publish this stack beyond loopback: a 2005 core with known remote code
+# execution issues. `web` and `db` have no egress; only `edge` has a port.
+
+name: typo3-38
+
+services:
+  web:
+    image: ghcr.io/mteu/typo3-throwback/typo3:3.8.1
+    # amd64 explicitly: the published image is built on an amd64 runner, and
+    # LD_PRELOAD in the Dockerfile points into /usr/lib/x86_64-linux-gnu. A
+    # weaker constraint than 3.3's — php:5.6-apache *does* publish arm64/v8, so a
+    # native arm64 build is possible once that path is changed with it.
+    platform: linux/amd64
+    pull_policy: missing
+    build:
+      context: ..
+      dockerfile: 3.8/Dockerfile
+    networks:
+      - isolated
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      TYPO3_DB_HOST: db
+      TYPO3_DB_NAME: typo3
+      TYPO3_DB_USER: typo3
+      TYPO3_DB_PASSWORD: typo3
+      TYPO3_SITENAME: TYPO3 3.8.1
+
+      # auto   — build the schema and seed an admin user, a root page and a root
+      #          TypoScript template, so the stack boots to a rendering site.
+      # wizard — leave the database empty and walk the 1-2-3 install wizard at
+      #          http://127.0.0.1:8038/typo3/install/index.php?mode=123&step=1
+      #          as a 2005 administrator would have.
+      TYPO3_PROVISION: ${TYPO3_PROVISION:-auto}
+
+      TYPO3_ADMIN_USER: admin
+      TYPO3_ADMIN_PASSWORD: ${TYPO3_ADMIN_PASSWORD:-password}
+      # joh316 is the historical TYPO3 default.
+      TYPO3_INSTALL_PASSWORD: joh316
+
+      # The clock lives in this image's Dockerfile rather than here. 3.3
+      # sets it in compose because its base is shared by every pre-PHP-5 release;
+      # this image belongs to one version, so its release date belongs in it.
+
+  db:
+    # The closest match to what 3.8.1 was written against. A preference here, not
+    # the hard floor it is for 3.3: PHP 5.6 talks to any MySQL. Note there is no
+    # --old-passwords — PHP 5.6 uses mysqlnd, which speaks the 4.1+ protocol and
+    # *cannot* use the pre-4.1 hashes PHP 4 requires. Turning it on here would
+    # break the stack rather than fix anything.
+    image: ${THROWBACK_MIRROR:-ghcr.io/mteu/typo3-throwback}/mysql@sha256:12da85ab88aedfdf39455872fb044f607c32fdc233cd59f1d26769fbf439b045
+    platform: linux/amd64
+    # Start as uid 999 rather than root so the image survives emulation; the long
+    # version of why is in 3.3/compose.yaml.
+    user: "999:999"
+    networks:
+      - isolated
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: typo3
+      MYSQL_USER: typo3
+      MYSQL_PASSWORD: typo3
+    command:
+      # 3.8-era schema and INSERTs are not STRICT-clean; strict mode rejects them.
+      - --sql-mode=
+      # t3lib_db never issues SET NAMES and never calls mysql_set_charset, so the
+      # connection inherits the server default. 3.8 assumes ISO-8859-1, so the
+      # server default must be latin1 or the backend renders mojibake.
+      # provision.php asserts this on every boot rather than trusting the flag.
+      - --character-set-server=latin1
+      - --collation-server=latin1_swedish_ci
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-u", "typo3", "-ptypo3"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+
+  edge:
+    # The only container with a published port, for the reason 3.3/compose.yaml
+    # gives: an internal network blocks published ports as well as egress.
+    image: ${THROWBACK_MIRROR:-ghcr.io/mteu/typo3-throwback}/nginx@sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10
+    networks:
+      - isolated
+      - published
+    ports:
+      - "127.0.0.1:${THROWBACK_PORT_38:-8038}:80"
+    configs:
+      - source: loopback-proxy
+        target: /etc/nginx/conf.d/default.conf
+    depends_on:
+      - web
+
+configs:
+  loopback-proxy:
+    # `$$` is Compose's escape for a literal `$`; nginx sees `$http_host`.
+    content: |
+      server {
+          listen 80 default_server;
+          server_name _;
+
+          # TYPO3 3.x builds absolute URLs and redirects from HTTP_HOST, so the
+          # original Host header has to survive the hop.
+          proxy_set_header Host $$http_host;
+          proxy_set_header X-Forwarded-For $$proxy_add_x_forwarded_for;
+
+          client_max_body_size 32m;
+
+          location / {
+              proxy_pass http://web:80;
+              proxy_read_timeout 300s;
+          }
+      }
+
+networks:
+  isolated:
+    internal: true
+  published:
+
+# As in 3.3: the mysql image declares its own anonymous volume, so tear down with
+# `down -v` between runs, or `up -d -V` to force a fresh datadir in place.
