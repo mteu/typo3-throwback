@@ -72,6 +72,13 @@ the file, use its name instead.
 > Use a real browser for the 3.3 backend. TYPO3 3.3 turns away any User-Agent it
 > does not recognise, `curl` included.
 
+## Or try 3.3.0 in your browser
+
+No Docker needed: <https://throwback.mteu.cc/3.3> runs TYPO3 3.3.0
+on PHP 4.4.9, compiled to WebAssembly, in your own tab. Nothing runs on a server,
+and nothing you do there leaves your browser. The credentials are the ones
+above.
+
 ## Behind the scenes
 
 - [Running the stacks](docs/running.md): options, the install wizard, arm64, troubleshooting
