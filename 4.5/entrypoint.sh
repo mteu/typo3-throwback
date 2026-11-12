@@ -69,8 +69,16 @@ if [ ! -f "$LOCALCONF" ]; then
     # UnexpectedValueException 1396795884. '.*' is the decision:
     # the stack answers on loopback only and has no egress, so a forged Host has
     # no one to mislead and nowhere to send mail.
+    #
+    # extList is the default (t3lib/config_default.php:183) plus t3skin. The default
+    # leaves the backend skin out: without it no skin stylesheet is registered, and
+    # the backend renders as bare HTML with an unbuilt module menu. 4.5's own
+    # update wizard says as much (sysext/install/updates/class.tx_coreupdates_t3skin.php:
+    # "Without t3skin the backend may be unusable"). t3skin has no ext_tables.sql, so
+    # provision.php's schema is unchanged by it.
     COMMON=$(cat <<EOF
 \$TYPO3_CONF_VARS['SYS']['compat_version'] = '4.5';
+\$TYPO3_CONF_VARS['EXT']['extList'] = 'filelist,version,tsconfig_help,context_help,extra_page_cm_options,impexp,belog,about,cshmanual,aboutmodules,setup,opendocs,install,t3editor,felogin,feedit,recycler,t3skin';
 \$TYPO3_CONF_VARS['SYS']['trustedHostsPattern'] = '.*';
 \$TYPO3_CONF_VARS['BE']['installToolPassword'] = '${INSTALL_HASH}';
 EOF
