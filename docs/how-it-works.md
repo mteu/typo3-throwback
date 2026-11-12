@@ -102,6 +102,11 @@ a POST whose body is not a form. The backend's Ext.Direct calls are exactly that
 warning only reaches a page when three settings are all on, and the image enables none
 of them. `php-legacy.ini` sets `always_populate_raw_post_data = -1` as a second guard.
 
+The default extension list leaves out `t3skin`, the backend skin. Without it no skin
+stylesheet is registered, and the backend renders as bare HTML. 4.5's own update
+wizard warns that the backend may be unusable without it. So the entrypoint enables it,
+and `provision.php` lists it with the other extensions. It has no tables of its own.
+
 ## 6.2.31
 
 6.2.31 runs on the same stack as 4.5, with the same UTF-8 and TLS findings. The new
