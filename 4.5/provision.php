@@ -61,9 +61,10 @@ $charsetProbe = 'Skaarhøj · Gödöllő · 日本語';
  * The extensions a fresh 4.5.40 loads, in the order t3lib_extMgm loads them:
  * REQUIRED_EXTENSIONS (t3lib/config_default.php:26) then the default extList
  * (:183), per t3lib_extMgm::getEnabledExtensionList() (t3lib/class.t3lib_extmgm.php:1623).
- * The generated localconf.php overrides neither.
+ * The generated localconf.php overrides extList only to append t3skin (see
+ * entrypoint.sh), which is why it is the last entry below.
  *
- * Only five of the twenty-two carry an ext_tables.sql — cms, em, tsconfig_help,
+ * Only five of the twenty-three carry an ext_tables.sql — cms, em, tsconfig_help,
  * impexp and felogin — and only em and tsconfig_help carry static data. The rest
  * are listed anyway so this array can be compared with the source line for line.
  */
@@ -71,7 +72,7 @@ $loadedExtensions = array(
     'cms', 'lang', 'sv', 'em', 'recordlist',
     'filelist', 'version', 'tsconfig_help', 'context_help', 'extra_page_cm_options',
     'impexp', 'belog', 'about', 'cshmanual', 'aboutmodules', 'setup', 'opendocs',
-    'install', 't3editor', 'felogin', 'feedit', 'recycler',
+    'install', 't3editor', 'felogin', 'feedit', 'recycler', 't3skin',
 );
 
 /**
