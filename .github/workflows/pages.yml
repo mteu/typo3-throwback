@@ -1,9 +1,8 @@
 # Builds the whole public site and publishes it to GitHub Pages, at
-# https://throwback.mteu.cc/ once the public repository's Pages settings name
-# that domain. Pages takes one deployment per repository, so every part of the
+# https://throwback.mteu.cc/. Pages takes one deployment per repository, so every part of the
 # site is built here and deployed together:
 #
-#   /        site/landing/, the hand-written front page
+#   /        site/landing/
 #   /docs/   site/docs/, built by Zensical
 #   /3.3/    TYPO3 3.3.0 in the browser: PHP 4.4.9 built to WebAssembly, and
 #            checked by php4-wasm/check.sh, headless Chromium included, before
@@ -103,8 +102,7 @@ jobs:
           path: ${{ runner.temp }}/php4wasm/out/site
           if-no-files-found: error
 
-  # --strict: a broken link or a page missing from the navigation fails the
-  # build, not the published site.
+  # --strict: a broken link or a page missing from the navigation fails the build, not the published site.
   docs:
     runs-on: ubuntu-24.04
     steps:
