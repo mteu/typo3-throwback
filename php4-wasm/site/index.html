@@ -1,0 +1,285 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TYPO3 3.3.0 in WebAssembly</title>
+<style>
+  :root {
+    --bg: #f4f1ea;
+    --bar: #ffffff;
+    --text: #23211d;
+    --muted: #6b665c;
+    --line: #ddd7ca;
+    --accent: #c8501e;
+    --error: #b3261e;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #1b1a18;
+      --bar: #252320;
+      --text: #ece8df;
+      --muted: #a39d90;
+      --line: #3a3732;
+      --accent: #f07a45;
+      --error: #f2867e;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    display: flex;
+    flex-direction: column;
+    background: var(--bg);
+    color: var(--text);
+    font: 14px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  header {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px 16px;
+    padding: 8px 16px;
+    background: var(--bar);
+    border-bottom: 1px solid var(--line);
+  }
+  h1 { margin: 0; font-size: 15px; font-weight: 600; white-space: nowrap; }
+  h1 span { color: var(--muted); font-weight: 400; }
+  nav { display: flex; flex-wrap: wrap; gap: 6px; }
+  button, .address {
+    font: inherit;
+    color: var(--text);
+    background: transparent;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 4px 10px;
+  }
+  button { cursor: pointer; }
+  button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+  button:disabled { opacity: 0.5; cursor: default; }
+  .address {
+    flex: 1 1 220px;
+    min-width: 0;
+    color: var(--muted);
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 12px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .status { color: var(--muted); font-size: 13px; }
+  .status.error { color: var(--error); white-space: pre-wrap; }
+  .logins { color: var(--muted); font-size: 12px; }
+  .logins code { color: var(--text); }
+  .links { font-size: 12px; }
+  .links a { color: var(--accent); }
+  iframe { flex: 1; width: 100%; border: 0; background: #fff; }
+</style>
+</head>
+<body>
+<header>
+  <h1>TYPO3 3.3.0 <span>on PHP 4.4.9, in your browser</span></h1>
+  <nav aria-label="Site">
+    <button type="button" data-path="" disabled>Frontend</button>
+    <button type="button" data-path="typo3/index.php" data-own-tab disabled title="Opens in a tab of its own. Keep this site open in a tab: that is where PHP runs.">Backend ↗</button>
+    <button type="button" data-path="typo3/install/index.php" disabled>Install Tool</button>
+  </nav>
+  <div class="address" id="address" aria-live="off"></div>
+  <button type="button" id="reset" disabled>Reset site</button>
+  <div class="status" id="status" role="status">Starting…</div>
+  <div class="logins">Backend <code>admin</code> / <code>password</code>, Install Tool <code>joh316</code></div>
+  <div class="links"><a href="https://github.com/mteu/typo3-throwback">Source</a> · <a href="LICENSES.txt">Licences</a></div>
+</header>
+<iframe id="site" title="TYPO3 3.3.0"></iframe>
+<script>
+'use strict';
+(async () => {
+  const status = document.getElementById('status');
+  const frame = document.getElementById('site');
+  const address = document.getElementById('address');
+  const buttons = document.querySelectorAll('nav button');
+  const reset = document.getElementById('reset');
+  const say = (text, isError = false) => {
+    status.textContent = text;
+    status.classList.toggle('error', isError);
+  };
+
+  // Framed by another site, "Reset site" and the backend could be clicked
+  // through a decoy (clickjacking). The shell has no reason to be framed.
+  if (window.top !== window.self) {
+    say('This page does not run inside a frame. Open it in its own tab.', true);
+    return;
+  }
+
+  if (!('serviceWorker' in navigator)) {
+    say('This browser has no service workers, which this page needs.', true);
+    return;
+  }
+
+  // One tab runs PHP, the one that holds this lock. Two PHP workers would
+  // keep two diverging copies of the site and save over each other's
+  // snapshot. Every other shell is a follower: sw.js relays its requests to
+  // the tab that holds the lock, and the first follower in line takes the
+  // lock over when that tab closes, restoring the last snapshot.
+  const LOCK = 'typo3-throwback-3.3.0-php';
+  const channel = 'BroadcastChannel' in window ? new BroadcastChannel(LOCK) : null;
+  let worker = null;
+  let uiEnabled = false;
+
+  // sw.js asks every shell with each request for site/. The PHP worker
+  // answers on the port the request came with; a follower declines at once.
+  navigator.serviceWorker.addEventListener('message', event => {
+    if (!event.data || event.data.type !== 'php-request') {
+      return;
+    }
+    const [port] = event.ports;
+    if (!worker) {
+      port.postMessage({ notLeader: true });
+      return;
+    }
+    const { request } = event.data;
+    worker.postMessage({ type: 'request', request }, [port, ...(request.body ? [request.body.buffer] : [])]);
+  });
+  navigator.serviceWorker.startMessages();
+
+  const startPhp = () => {
+    // assemble.sh gives the worker a name with a hash of its content.
+    worker = new Worker('php-worker.js');
+    return new Promise((resolve, reject) => {
+      // A shell cached from before a deploy asks for a worker that is gone.
+      worker.addEventListener('error', event => {
+        reject(new Error(`the PHP worker stopped: ${event.message || 'it did not load'}. If the site was just updated, reload this page in a few minutes.`));
+      });
+      worker.addEventListener('message', event => {
+        const message = event.data;
+        if (message.type === 'progress') {
+          say(message.text);
+        } else if (message.type === 'ready') {
+          resolve(message);
+        } else if (message.type === 'failed') {
+          reject(new Error(message.message));
+        } else if (message.type === 'reset-done') {
+          if (channel) {
+            channel.postMessage({ type: 'reload' });
+          }
+          location.reload();
+        }
+      });
+    });
+  };
+  if (channel) {
+    channel.addEventListener('message', event => {
+      if (event.data.type === 'reset' && worker) {
+        worker.postMessage({ type: 'reset' });
+      } else if (event.data.type === 'reload') {
+        location.reload();
+      }
+    });
+  }
+
+  try {
+    await navigator.serviceWorker.register('sw.js');
+    await navigator.serviceWorker.ready;
+  } catch (error) {
+    say(`Could not start: ${error.message}`, true);
+    return;
+  }
+
+  const open = path => {
+    frame.src = `site/${path}`;
+  };
+  // 3.3's backend is a frameset that takes itself for the top window: its
+  // frames call top.goToModule(), top.content, top.TS and more, in 39 files.
+  // In the iframe, top is this page, so the backend gets a window of its own.
+  // A shell has to stay open, because the leader's worker runs PHP.
+  const backendPath = /\/site\/typo3\/(?!install\/)/;
+  const openOwnTab = path => {
+    window.open(`site/${path}`, 'typo3-backend');
+  };
+  frame.addEventListener('load', () => {
+    let shown = null;
+    try {
+      shown = frame.contentWindow.location;
+    } catch (error) {
+      address.textContent = '';
+      return;
+    }
+    if (backendPath.test(shown.pathname)) {
+      say('The backend runs in a tab of its own. Use the Backend button.', true);
+      open('');
+      return;
+    }
+    address.textContent = shown.pathname.replace(/^.*?\/site\//, '/') + shown.search;
+  });
+
+  const enableUi = () => {
+    if (uiEnabled) {
+      return;
+    }
+    uiEnabled = true;
+    for (const button of buttons) {
+      button.disabled = false;
+      button.addEventListener('click', () => {
+        if (button.hasAttribute('data-own-tab')) {
+          openOwnTab(button.dataset.path);
+        } else {
+          open(button.dataset.path);
+        }
+      });
+    }
+    reset.disabled = false;
+    reset.addEventListener('click', () => {
+      if (!confirm('Throw away this site\'s database and files, and provision a fresh one?')) {
+        return;
+      }
+      if (worker) {
+        worker.postMessage({ type: 'reset' });
+      } else if (channel) {
+        channel.postMessage({ type: 'reset' });
+      }
+    });
+    window.siteReady = true;
+    // Only the entry points the iframe shows: an arbitrary path from a link
+    // would reach sw.js with this page as its referrer, which is what sw.js
+    // trusts. The backend is not one: a tab opened without a click is blocked.
+    const entryPoints = [...buttons].filter(button => !button.hasAttribute('data-own-tab')).map(button => button.dataset.path);
+    const asked = new URLSearchParams(location.search).get('path');
+    open(entryPoints.includes(asked) ? asked : '');
+  };
+
+  const lead = async tookOver => {
+    try {
+      const { restored } = await startPhp();
+      say(tookOver ? 'Ready. The tab that ran PHP closed, so this one took over.'
+        : restored ? 'Ready. Restored from your last visit.' : 'Ready. Provisioned a fresh site.');
+    } catch (error) {
+      say(`Could not start: ${error.message}`, true);
+      return;
+    }
+    enableUi();
+  };
+  // Held until the tab closes, which hands the lock to the next shell.
+  const holdForever = () => new Promise(() => {});
+
+  if (!navigator.locks) {
+    // Without Web Locks every tab runs PHP, as before.
+    await lead(false);
+    return;
+  }
+  navigator.locks.request(LOCK, { ifAvailable: true }, lock => {
+    if (lock) {
+      lead(false);
+      return holdForever();
+    }
+    say('Ready. PHP runs in another tab of this site, and this one uses it. Keep that tab open, or this one takes over.');
+    enableUi();
+    navigator.locks.request(LOCK, () => {
+      lead(true);
+      return holdForever();
+    });
+    return null;
+  });
+})();
+</script>
+</body>
+</html>

@@ -49,6 +49,11 @@ rejects that even with a relaxed `sql_mode`, so `provision.php` strips it. It al
 the SQL files on lines that end in a semicolon, as TYPO3 does, because some inserts
 contain semicolons inside the data.
 
+The seeded admin gets `fileoper_perms = 7`, as 3.3.0's own Install Tool gives the
+admin it creates (`t3lib/class.t3lib_install.php:3009`). `admin = 1` alone does not
+cover file operations: `tce_file.php` reads only this field, and at its default of 0
+even an admin is told "You are not allowed to upload files!".
+
 ## 3.8.1
 
 3.8.1 needs PHP 4.1 or newer and runs on PHP 5, so no PHP 4 build is needed. 5.6.40 is
