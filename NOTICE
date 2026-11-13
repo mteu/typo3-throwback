@@ -49,24 +49,27 @@ Packages the builds install
   ImageMagick and the gd development files. Each stays under its Debian
   licence. Debian publishes the source of every package.
 
-  The php4-wasm installs sql.js from npm, pinned in
-  php4-wasm/package-lock.json. sql.js is MIT-licensed. The SQLite it
+  The WebAssembly site installs sql.js from npm, pinned in
+  wasm/package-lock.json. sql.js is MIT-licensed. The SQLite it
   compiles is in the public domain. The WebAssembly builds link Emscripten's
   runtime and C library, which are MIT- and University of Illinois/NCSA-
   licensed, with musl under the MIT licence. For GD they also link
   Emscripten's ports of zlib (zlib licence), libpng (libpng licence),
   libjpeg 9f (the Independent JPEG Group's licence) and FreeType (the
   FreeType License), and the GD 2.0.28 bundled in PHP keeps its own
-  licence. Its checks also install Playwright, which is Apache-2.0-licensed
-  and is not published.
+  licence. So does the expat 1.95.6 bundled in PHP, which is
+  MIT-licensed; PHP's archive leaves out its licence file, so
+  wasm/php-4.4.9/expat-COPYING carries it. Its checks also install
+  Playwright, which is Apache-2.0-licensed and is not published.
 
 The site published to GitHub Pages
 
   .github/workflows/pages.yml publishes PHP 4.4.9 compiled to WebAssembly,
-  sql.js and the TYPO3 3.3.0 archive. The site carries LICENSES.txt with the
-  notices the PHP License and the Zend Engine License require, the credit
-  lines the libjpeg and FreeType licences require, and the full texts of
-  every licence above that applies to it.
+  sql.js and the TYPO3 3.3.0 and 3.8.1 archives. Each archive bundles a
+  phpMyAdmin, under the GPL. The site carries LICENSES.txt with the notices
+  the PHP License and the Zend Engine License require, the credit lines the
+  libjpeg and FreeType licences require, the licence files in each TYPO3
+  archive, and the full texts of every licence above that applies to it.
 
 The TYPO3 mark in README.md
 

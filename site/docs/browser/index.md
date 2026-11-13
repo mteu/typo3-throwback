@@ -7,7 +7,7 @@ install.
 | TYPO3 | In your browser |
 | --- | --- |
 | [3.3.0](3.3.md) | [open it](../../3.3/) |
-| 3.8.1 | not yet |
+| [3.8.1](3.8.md) | [open it](../../3.8/) |
 | 4.0.13 | not yet |
 | 4.5.40 | not yet |
 | 6.2.31 | not yet |
