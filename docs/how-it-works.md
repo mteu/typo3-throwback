@@ -69,6 +69,13 @@ Under a frozen clock every cookieless request that one Apache child served got t
 child's one id, so a second browser arrived logged in as the first. The CI job checks
 for exactly that.
 
+The seeded admin gets `fileoper_perms = 7`, as 3.8.1's own Install Tool gives the
+admin it creates (`typo3/sysext/install/mod/class.tx_install.php:3665`). `admin = 1`
+alone does not cover file operations: `tce_file.php:144` hands only this field to
+`t3lib_extFileFunctions::init_actionPerms()`, and at its default of 0 even an admin is
+told "You are not allowed to upload files!". The CI job uploads a file into
+`fileadmin/` and reads it back.
+
 The Debian stretch packages the image adds come from `3.8/stretch-debs.lock`. See
 [Building from source](building.md#debian-packages-for-the-stretch-images).
 
@@ -84,6 +91,10 @@ charset when it calls `htmlspecialchars()`.
 It builds every redirect as an absolute URL, so behind a TLS-terminating proxy it has to
 be told so with `TYPO3_BEHIND_TLS=1`. Nothing else is needed, because 4.0 predates
 `trustedHostsPattern`. It needs the same Install Tool edit as 3.8.
+
+Its seeded admin needs `fileoper_perms = 7` for the same reason as 3.8's, and gets it
+as 4.0.13's own Install Tool gives it (`class.tx_install.php:3620`). 4.5 needs none of
+this: its `getFileoperationPermissions()` gives an admin every bit.
 
 ## 4.5.40
 

@@ -61,6 +61,41 @@ login_and_expect() {
     echo "logged in; redirected to $location"
 }
 
+# assert_admin_can_upload <absolute path of the site's fileadmin/>
+#
+# Uploads a file into fileadmin/ through tce_file.php, as the file list's upload
+# form does, with the session in ./jar, then reads it back over HTTP.
+#
+# The seeded admin needs fileoper_perms for this: 3.3 to 4.0 hand that field
+# alone to t3lib_extFileFunctions::init_actionPerms() (tce_file.php:144 in 3.8
+# and 4.0), and admin = 1 does not imply it. At 0, tce_file.php answers 200
+# with "You are not allowed to upload files!". On success it answers with a
+# redirect (finish(), redirect=), and on any error with that 200 page instead
+# (t3lib_extFileFunctions::printLogErrorMessages()).
+assert_admin_can_upload() {
+    target="$1"
+
+    printf 'Uploaded by CI through tce_file.php.\n' > upload-probe.txt
+    code=$(curl -sS -A "$UA" -b jar -e "$BASE/typo3/file_upload.php" \
+        -o upload.html -w '%{http_code}' \
+        -F "file[upload][1][target]=$target" -F 'file[upload][1][data]=1' \
+        -F 'upload_1=@upload-probe.txt;filename=ci-upload.txt' \
+        -F 'redirect=file_list.php' \
+        "$BASE/typo3/tce_file.php")
+    if [ "$code" != 302 ]; then
+        echo "::error::tce_file.php answered $code to the upload, not 302"
+        sed -e 's/<[^>]*>//g' upload.html | grep -v '^[[:space:]]*$' | head -20
+        exit 1
+    fi
+
+    curl -fsS -A "$UA" "$BASE/fileadmin/ci-upload.txt" -o uploaded.txt
+    if ! cmp -s upload-probe.txt uploaded.txt; then
+        echo "::error::fileadmin/ci-upload.txt does not hold what was uploaded"
+        exit 1
+    fi
+    echo "the admin uploaded a file into fileadmin/, and it is served back unchanged"
+}
+
 # assert_fresh_sessions_are_distinct
 #
 # Opens the login form a dozen times with no cookies, while the session in ./jar
