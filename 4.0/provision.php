@@ -373,10 +373,18 @@ foreach ($loadedExtensions as $extension) {
 // is on because t3lib_beuserauth sets challengeStoredInCookie, :108).
 //
 // time() is frozen by libfaketime, so tstamp/crdate are identical on every run.
+//
+// fileoper_perms is 7, as 4.0.13's own Install Tool sets it when it creates an
+// admin (typo3/sysext/install/mod/class.tx_install.php:3620). admin = 1 does not
+// cover file operations: tce_file.php:144 hands this field alone to
+// t3lib_extFileFunctions::init_actionPerms(), and at its default of 0 even an
+// admin gets "You are not allowed to upload files!". 1 is files (upload, copy,
+// move, delete, rename), 2 is unzip, 4 is folders. 4.5 needs none of this: its
+// getFileoperationPermissions() gives an admin every bit.
 $now = time();
-$sql = "INSERT INTO be_users (pid, tstamp, crdate, username, password, admin, disable, deleted, realName)"
+$sql = "INSERT INTO be_users (pid, tstamp, crdate, username, password, admin, disable, deleted, realName, fileoper_perms)"
      . " VALUES (0, " . $now . ", " . $now . ", '" . mysql_real_escape_string($adminUser, $link) . "', '"
-     . md5($adminPass) . "', 1, 0, 0, 'Administrator')";
+     . md5($adminPass) . "', 1, 0, 0, 'Administrator', 7)";
 mysql_query($sql, $link) or fail('creating admin user: ' . mysql_error($link));
 out('created backend admin "' . $adminUser . '"');
 
