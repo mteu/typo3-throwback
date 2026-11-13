@@ -75,7 +75,27 @@
   .links a:hover, .links a:focus-visible { text-decoration: underline; }
   .links svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
   .links svg.fill { fill: currentColor; stroke: none; }
-  iframe { flex: 1; width: 100%; border: 0; background: #fff; }
+  .stage { flex: 1; position: relative; min-height: 0; }
+  iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; background: #fff; }
+  .loader {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 16px;
+    background: var(--bg);
+  }
+  .loader[hidden] { display: none; }
+  .loader-card { width: min(420px, 100%); }
+  .loader-title { margin: 0 0 12px; font-size: 18px; font-weight: 600; }
+  .bar { height: 8px; overflow: hidden; border-radius: 4px; background: var(--line); }
+  .bar > div { width: 0; height: 100%; background: var(--accent); transition: width 0.3s ease-out; }
+  .loader.error .bar > div { background: var(--error); }
+  .loader-text { margin: 10px 0 0; min-height: 1.4em; color: var(--muted); }
+  .loader.error .loader-text { color: var(--error); white-space: pre-wrap; }
+  .loader-note { margin: 16px 0 0; color: var(--muted); font-size: 12px; }
+  @media (prefers-reduced-motion: reduce) { .bar > div { transition: none; } }
 </style>
 </head>
 <body>
@@ -96,7 +116,17 @@
     <a href="LICENSES.txt" title="Licenses" aria-label="Licenses"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m16 16 3-8 3 8c-.87.65-1.92 1-3 1s-2.13-.35-3-1Z"/><path d="m2 16 3-8 3 8c-.87.65-1.92 1-3 1s-2.13-.35-3-1Z"/><path d="M7 21h10"/><path d="M12 3v18"/><path d="M3 7h2c2 0 5-1 7-2 2 1 5 2 7 2h2"/></svg></a>
   </div>
 </header>
-<iframe id="site" title="TYPO3 v3.3.0"></iframe>
+<div class="stage">
+  <iframe id="site" title="TYPO3 v3.3.0"></iframe>
+  <div class="loader" id="loader">
+    <div class="loader-card">
+      <p class="loader-title" id="loader-title">Starting TYPO3 v3.3.0</p>
+      <div class="bar" id="bar" role="progressbar" aria-labelledby="loader-title" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><div id="fill"></div></div>
+      <p class="loader-text" id="loader-text">Starting…</p>
+      <p class="loader-note">The first visit downloads PHP and TYPO3 and sets the site up. Later visits restore it from this browser.</p>
+    </div>
+  </div>
+</div>
 <script>
 'use strict';
 (async () => {
@@ -105,9 +135,23 @@
   const address = document.getElementById('address');
   const buttons = document.querySelectorAll('nav button');
   const reset = document.getElementById('reset');
+  const loader = document.getElementById('loader');
+  const loaderText = document.getElementById('loader-text');
+  const bar = document.getElementById('bar');
+  const fill = document.getElementById('fill');
   const say = (text, isError = false) => {
     status.textContent = text;
     status.classList.toggle('error', isError);
+    loaderText.textContent = text;
+    loader.classList.toggle('error', isError);
+  };
+  // Only ever forward, because the worker's stages overlap a little.
+  let barFraction = 0;
+  const showProgress = fraction => {
+    barFraction = Math.max(barFraction, Math.min(Math.max(fraction, 0), 1));
+    const percent = Math.round(barFraction * 100);
+    fill.style.width = `${percent}%`;
+    bar.setAttribute('aria-valuenow', String(percent));
   };
 
   // Framed by another site, "Reset site" and the backend could be clicked
@@ -160,6 +204,9 @@
         const message = event.data;
         if (message.type === 'progress') {
           say(message.text);
+          if (typeof message.fraction === 'number') {
+            showProgress(message.fraction);
+          }
         } else if (message.type === 'ready') {
           resolve(message);
         } else if (message.type === 'failed') {
@@ -244,6 +291,8 @@
         channel.postMessage({ type: 'reset' });
       }
     });
+    showProgress(1);
+    loader.hidden = true;
     window.siteReady = true;
     // Only the entry points the iframe shows: an arbitrary path from a link
     // would reach sw.js with this page as its referrer, which is what sw.js

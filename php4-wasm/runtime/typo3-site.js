@@ -143,7 +143,8 @@
     //   clockStartMs: where PHP's and the server's clock start, in
     //     milliseconds since the epoch, or null for today
     //   snapshot: what snapshot() returned on an earlier visit, or null
-    //   onProgress: called with a line of text per boot step
+    //   onProgress: called with a line of text per boot step, and how far
+    //     boot has come, 0 to 1
     static async boot(options) {
       const site = new Typo3Site(options);
       await site.start(options);
@@ -171,11 +172,12 @@
       const ini = new Uint8Array(legacyIni.length + extra.length);
       ini.set(legacyIni);
       ini.set(extra, legacyIni.length);
+      this.progress('starting PHP 4.4.9', 0);
       this.php = await Php4Runtime.create(createPhp4, { iniText: ini, mysql: this.mysql, clock });
       const FS = this.php.FS;
       FS.mkdirTree(UPLOAD_DIR);
 
-      this.progress('unpacking typo3_src-3.3.0');
+      this.progress('unpacking typo3_src-3.3.0', 0.3);
       this.unpack(FS, readTar(tarball));
       this.editSourceAsTheDockerfileDoes(FS);
       this.assembleDocroot(FS);
@@ -186,9 +188,9 @@
           FS.writeFile(`${this.docroot}/${path}`, bytes);
         }
         this.restored = true;
-        this.progress('restored the database and files from the last visit');
+        this.progress('restored the database and files from the last visit', 1);
       } else {
-        this.progress('provisioning with 3.3/provision.php');
+        this.progress('provisioning with 3.3/provision.php', 0.6);
         FS.mkdirTree(PROVISION_SCRIPT.replace(/\/[^/]*$/, ''));
         FS.writeFile(PROVISION_SCRIPT, provisionScript);
         const response = this.php.request({

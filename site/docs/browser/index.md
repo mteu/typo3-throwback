@@ -12,6 +12,20 @@ install.
 | 4.5.40 | not yet |
 | 6.2.31 | not yet |
 
+## What WebAssembly does
+
+WebAssembly is a compact binary format that browsers run next to JavaScript.
+Programs written in C, such as PHP, can be compiled to it. The browser then runs
+them at close to native speed, inside the same sandbox as any web page.
+
+That is the whole trick. PHP is not translated to JavaScript or run through an
+emulator. Its C source is compiled once, ahead of time, into a `.wasm` file. Your
+browser downloads that file and runs it like a script.
+
+The sandbox is also why some things do not work here. A page cannot read your
+files, reach other programs or open network connections of its own. PHP only gets
+what the page hands it.
+
 ## How it works
 
 - **PHP is the original interpreter.** PHP 4.4.9 is compiled from unmodified

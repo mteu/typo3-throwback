@@ -30,16 +30,51 @@ let saveTimer = null;
 let saving = Promise.resolve();
 let resetting = false;
 
-function progress(text) {
-  postMessage({ type: 'progress', text });
+// fraction is how far boot has come, 0 to 1, for the shell's progress bar.
+// Without one, the shell keeps the bar where it is and only shows the text.
+function progress(text, fraction) {
+  postMessage({ type: 'progress', text, fraction });
 }
 
-async function fetchBytes(name) {
+// The bar's share of each stage. PHP, provisioning and the unpacking run
+// synchronously and cannot report from inside, so they get fixed steps; the
+// archive download is the one stage that reports real bytes.
+const DOWNLOAD_END = 0.4;
+const GUNZIP_END = 0.45;
+const BOOT_SHARE = 0.53;
+
+async function fetchBytes(name, onBytes) {
   const response = await fetch(name);
   if (!response.ok) {
     throw new Error(`${name}: ${response.status}`);
   }
-  return new Uint8Array(await response.arrayBuffer());
+  if (!onBytes || !response.body) {
+    return new Uint8Array(await response.arrayBuffer());
+  }
+  // Content-Length is the encoded size. A server that compresses on the fly
+  // sends more bytes than that through the reader, so the ratio is capped.
+  const total = Number(response.headers.get('Content-Length')) || 0;
+  const chunks = [];
+  let received = 0;
+  const reader = response.body.getReader();
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) {
+      break;
+    }
+    chunks.push(value);
+    received += value.length;
+    if (total) {
+      onBytes(Math.min(received / total, 1));
+    }
+  }
+  const bytes = new Uint8Array(received);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return bytes;
 }
 
 async function gunzip(bytes) {
@@ -79,27 +114,38 @@ const saveSnapshot = snapshot => storage('readwrite', store => store.put(snapsho
 const clearSnapshot = () => storage('readwrite', store => store.delete('snapshot'));
 
 async function boot() {
-  progress('loading PHP 4.4.9, SQLite and the TYPO3 3.3.0 archive');
+  progress('loading PHP 4.4.9, SQLite and the TYPO3 3.3.0 archive', 0.02);
+  // One message per percent is plenty for a bar.
+  let reported = 0;
+  const reportDownload = ratio => {
+    const fraction = 0.02 + (DOWNLOAD_END - 0.02) * ratio;
+    if (fraction - reported >= 0.01) {
+      reported = fraction;
+      progress('downloading the TYPO3 3.3.0 archive', fraction);
+    }
+  };
   const [tarGz, provisionScript, legacyIni, SQL, snapshot] = await Promise.all([
-    fetchBytes(published('typo3_src-3.3.0.tar.gz')),
+    fetchBytes(published('typo3_src-3.3.0.tar.gz'), reportDownload),
     fetchBytes(published('provision.php')),
     fetchBytes(published('php-legacy.ini')),
     initSqlJs({ locateFile: published }),
     loadSnapshot().catch(() => null),
   ]);
+  progress('unpacking the archive', DOWNLOAD_END);
+  const tarball = await gunzip(tarGz);
   site = await Typo3Site.boot({
     Php4Runtime,
     createPhp4: options => createPhp4({ ...options, locateFile: published }),
     MysqlOnSqlite,
     SQL,
     readTar,
-    tarball: await gunzip(tarGz),
+    tarball,
     provisionScript,
     legacyIni,
     urlPrefix,
     clockStartMs: RELEASE_NOON_MS,
     snapshot: snapshot || null,
-    onProgress: progress,
+    onProgress: (text, share) => progress(text, share === undefined ? undefined : GUNZIP_END + BOOT_SHARE * share),
   });
   if (!site.restored) {
     await saveSnapshot(site.snapshot());
