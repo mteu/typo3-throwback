@@ -16,14 +16,16 @@
 #
 # Publishing rules:
 #
-#   * Only the default branch deploys. A push to any other branch runs the
-#     same build and checks, and uploads the site as an artifact, so it can be
+#   * Only the default branch of mteu/typo3-throwback deploys. A push to any
+#     other branch, or to any other repository such as a fork, runs the same
+#     build and checks, and uploads the site as an artifact, so it can be
 #     looked at, but publishes nothing. There is no pull_request trigger, as in
 #     images.yml: a pull request's branch is already built on push, and a
 #     second trigger only builds the same commit twice.
 #   * Pages must be set to deploy from GitHub Actions (Settings, Pages, Build
 #     and deployment, Source). Until then the deploy job fails and the site is
-#     simply not published.
+#     simply not published. In a repository that does not deploy, the job is
+#     skipped, whatever its Pages settings say.
 #
 # Like images.yml, the trigger is an allowlist: the files the site is built,
 # checked or assembled from, and this workflow.
@@ -172,7 +174,7 @@ jobs:
 
   deploy:
     needs: assemble
-    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    if: github.repository == 'mteu/typo3-throwback' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
     runs-on: ubuntu-24.04
     permissions:
       pages: write
