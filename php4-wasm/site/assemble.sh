@@ -52,13 +52,13 @@ worker=$(hashed php-worker.js)
 test "$(grep -c "new Worker('php-worker.js')" "$site/index.html")" = 1
 sed -i "s|new Worker('php-worker.js')|new Worker('$worker')|" "$site/index.html"
 
-# The licences travel with the binaries: PHP's, Zend's and PCRE's ask for
-# their notices in any binary redistribution, and so do the MIT licences.
+# The licenses travel with the binaries: PHP's, Zend's and PCRE's ask for
+# their notices in any binary redistribution, and so do the MIT licenses.
 # libjpeg's and FreeType's ask for a credit line in the documentation.
 licences="$work/out/licences"
 {
     cat <<'EOF'
-This site runs third-party software. Each part keeps its own licence. The
+This site runs third-party software. Each part keeps its own license. The
 full texts follow.
 
 TYPO3 3.3.0 (typo3_src-3.3.0.tar.gz), GPL-2.0-or-later
@@ -71,12 +71,12 @@ PHP 4.4.9 (php4.js, php4.wasm), PHP License 3.01
     <http://www.php.net/software/>.
     This product includes the Zend Engine, freely available at
     <http://www.zend.com/>.
-    It also includes PCRE, under the BSD licence, and was compiled with
+    It also includes PCRE, under the BSD license, and was compiled with
     Emscripten, whose runtime and musl libc it contains (MIT and
     University of Illinois/NCSA).
-    It includes GD 2.0.28 as bundled in PHP, under the GD licence in
+    It includes GD 2.0.28 as bundled in PHP, under the GD license in
     gd-README, and links these libraries, built by Emscripten's ports:
-    zlib (zlib licence), libpng (libpng licence), libjpeg 9f and FreeType
+    zlib (zlib license), libpng (libpng license), libjpeg 9f and FreeType
     (FreeType License).
     This software is based in part on the work of the Independent JPEG
     Group.
@@ -87,7 +87,7 @@ sql.js 1.14.2 (sql-wasm.js, sql-wasm.wasm), MIT
     It compiles SQLite, which is in the public domain.
 
 Everything else on this site comes from https://github.com/mteu/typo3-throwback-src
-and is under that project's MIT licence, whose text comes last.
+and is under that project's MIT license, whose text comes last.
 EOF
     for file in php-4.4.9-LICENSE zend-engine-LICENSE pcre-LICENCE emscripten-LICENSE musl-COPYRIGHT \
         gd-README zlib-LICENSE libpng-LICENSE libjpeg-README freetype-FTL.TXT; do

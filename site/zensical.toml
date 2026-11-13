@@ -1,0 +1,69 @@
+# The documentation, served at /docs/. The front page is the hand-written page in
+# landing/, served at the root, and each browser build has a directory of its
+# own, such as /3.3/. .github/workflows/pages.yml puts the three together.
+#
+# A project of its own rather than docs/ pointed at by docs_dir: the files in
+# docs/ link to compose files and Dockerfiles outside it, which would be dead
+# links here, and a generator publishes everything in its docs_dir.
+[project]
+site_name = "typo3-throwback documentation"
+site_description = "A trip down memory lane: run five real TYPO3 releases from 2002 to 2017, preserved so they still work."
+site_dir = "build/docs"
+# The site's own origin.
+# Navigation uses relative links only, so a preview elsewhere still works.
+site_url = "https://throwback.mteu.cc/docs/"
+extra_css = ["assets/extra.css"]
+repo_url = "https://github.com/mteu/typo3-throwback"
+repo_name = "mteu/typo3-throwback"
+copyright = """
+Not affiliated with or endorsed by the TYPO3 Association. "TYPO3" is a registered
+trademark of the TYPO3 Association.
+"""
+nav = [
+  { "Home" = "https://throwback.mteu.cc/" },
+  { "Documentation" = "index.md" },
+  { "In your browser" = [
+    "browser/index.md",
+    { "TYPO3 3.3.0" = "browser/3.3.md" },
+  ] },
+  { "With Docker" = [
+    "docker/index.md",
+    { "TYPO3 3.3.0" = "docker/3.3.md" },
+    { "TYPO3 3.8.1" = "docker/3.8.md" },
+    { "TYPO3 4.0.13" = "docker/4.0.md" },
+    { "TYPO3 4.5.40" = "docker/4.5.md" },
+    { "TYPO3 6.2.31" = "docker/6.2.md" },
+  ] },
+]
+
+[project.theme]
+language = "en"
+logo = "assets/mark.png"
+favicon = "assets/mark.png"
+features = [
+  "content.code.copy",
+  "content.tabs.link",
+  "navigation.footer",
+  "navigation.indexes",
+  "navigation.instant",
+  "navigation.top",
+  "navigation.tracking",
+  "search.highlight",
+]
+
+[[project.theme.palette]]
+media = "(prefers-color-scheme)"
+toggle.icon = "lucide/sun-moon"
+toggle.name = "Switch to light mode"
+
+[[project.theme.palette]]
+media = "(prefers-color-scheme: light)"
+scheme = "default"
+toggle.icon = "lucide/sun"
+toggle.name = "Switch to dark mode"
+
+[[project.theme.palette]]
+media = "(prefers-color-scheme: dark)"
+scheme = "slate"
+toggle.icon = "lucide/moon"
+toggle.name = "Switch to system preference"
