@@ -566,8 +566,22 @@ jobs:
             echo "THROWBACK_MIRROR=docker.io/library" >> "$GITHUB_ENV"
           fi
 
+      # compose.yaml names the public repository's image. In any other
+      # repository, such as -src, TYPO3_IMAGE differs, and `up --no-build` would
+      # pull the published image instead of testing this build. So the build
+      # gets compose's name too, which pull_policy: missing then keeps.
       - name: Start the stack
-        run: docker compose up -d --no-build
+        run: |
+          set -euo pipefail
+          compose_image=$(docker compose config --images | grep '/typo3:')
+          docker tag "$TYPO3_IMAGE:3.8.1" "$compose_image"
+          docker compose up -d --no-build
+          running=$(docker inspect -f '{{.Image}}' "$(docker compose ps -q web)")
+          built=$(docker image inspect -f '{{.Id}}' "$TYPO3_IMAGE:3.8.1")
+          if [ "$running" != "$built" ]; then
+            echo "::error::the stack runs $running, not this build, $built"
+            exit 1
+          fi
 
       - name: Wait for the frontend
         run: |
@@ -663,6 +677,8 @@ jobs:
           refute_php_errors_in edit.html
           echo "record editing passed"
 
+          assert_admin_can_upload /var/www/html/fileadmin
+
           # Last, so that a failure here cannot hide whether the login and the
           # editor work.
           assert_fresh_sessions_are_distinct
@@ -747,8 +763,22 @@ jobs:
             echo "THROWBACK_MIRROR=docker.io/library" >> "$GITHUB_ENV"
           fi
 
+      # compose.yaml names the public repository's image. In any other
+      # repository, such as -src, TYPO3_IMAGE differs, and `up --no-build` would
+      # pull the published image instead of testing this build. So the build
+      # gets compose's name too, which pull_policy: missing then keeps.
       - name: Start the stack
-        run: docker compose up -d --no-build
+        run: |
+          set -euo pipefail
+          compose_image=$(docker compose config --images | grep '/typo3:')
+          docker tag "$TYPO3_IMAGE:4.0.13" "$compose_image"
+          docker compose up -d --no-build
+          running=$(docker inspect -f '{{.Image}}' "$(docker compose ps -q web)")
+          built=$(docker image inspect -f '{{.Id}}' "$TYPO3_IMAGE:4.0.13")
+          if [ "$running" != "$built" ]; then
+            echo "::error::the stack runs $running, not this build, $built"
+            exit 1
+          fi
 
       - name: Wait for the frontend
         run: |
@@ -873,6 +903,8 @@ jobs:
           curl -fsS -A "$UA" "$BASE/?no_cache=1" -o fe-saved.html
           python3 -I 4.0/ci-probe.py frontend fe-saved.html "$CHARSET_PROBE_SAVED"
           refute_php_errors_in fe-saved.html
+
+          assert_admin_can_upload /var/www/html/fileadmin
           echo "backend login and record editing passed"
 
       # The default_charset finding, run. 4.0 never names a

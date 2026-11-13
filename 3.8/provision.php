@@ -326,9 +326,16 @@ foreach ($loadedExtensions as $extension) {
 //
 // time() comes from libfaketime (see the Dockerfile), which starts at the release
 // date and runs, so the seeded tstamp/crdate say 2005-11-14.
+//
+// fileoper_perms is 7, as 3.8.1's own Install Tool sets it when it creates an
+// admin (typo3/sysext/install/mod/class.tx_install.php:3665). admin = 1 does not
+// cover file operations: tce_file.php:144 hands this field alone to
+// t3lib_extFileFunctions::init_actionPerms(), and at its default of 0 even an
+// admin gets "You are not allowed to upload files!". 1 is files (upload, copy,
+// move, delete, rename), 2 is unzip, 4 is folders.
 $now = time();
-$sql = "INSERT INTO be_users (pid, tstamp, crdate, username, password, admin, disable, deleted, realName, uc, TSconfig, usergroup, userMods, db_mountpoints, file_mountpoints)"
-     . " VALUES (0, " . $now . ", " . $now . ", '" . addslashes($adminUser) . "', '" . md5($adminPass) . "', 1, 0, 0, 'Administrator', '', '', '', '', '', '')";
+$sql = "INSERT INTO be_users (pid, tstamp, crdate, username, password, admin, disable, deleted, realName, uc, TSconfig, usergroup, userMods, db_mountpoints, file_mountpoints, fileoper_perms)"
+     . " VALUES (0, " . $now . ", " . $now . ", '" . addslashes($adminUser) . "', '" . md5($adminPass) . "', 1, 0, 0, 'Administrator', '', '', '', '', '', '', 7)";
 mysql_query($sql, $link) or fail('creating admin user: ' . mysql_error($link));
 out('created backend admin "' . $adminUser . '"');
 
