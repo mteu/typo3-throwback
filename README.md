@@ -98,12 +98,12 @@ The guides below show paths as they appear inside a clone, such as
 > Use a real browser for the 3.3 backend. TYPO3 3.3 rejects any User-Agent it
 > does not recognize, including `curl`.
 
-## Or try 3.3.0 in your browser
+## Or try 3.3.0 and 3.8.1 in your browser
 
-No Docker needed: <https://throwback.mteu.cc/3.3> runs TYPO3 3.3.0
-on PHP 4.4.9, compiled to WebAssembly, in your own tab. Nothing runs on a server,
-and nothing you do there leaves your browser. The credentials are the ones
-above.
+No Docker needed: <https://throwback.mteu.cc/3.3> runs TYPO3 3.3.0, and
+<https://throwback.mteu.cc/3.8> runs TYPO3 3.8.1, both on PHP 4.4.9, compiled to
+WebAssembly, in your own tab. Nothing runs on a server, and nothing you do there
+leaves your browser. The credentials are the ones above.
 
 ## Documentation
 

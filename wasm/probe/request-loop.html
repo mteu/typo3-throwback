@@ -1,0 +1,87 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>PHP 4 WASM request loop probe</title>
+<pre id="out"></pre>
+<script src="php-runtime.js"></script>
+<script src="mysql-sqlite.js"></script>
+<script src="sqljs/sql-wasm.js"></script>
+<script src="sapi/php.js"></script>
+<script>
+(async () => {
+  const lines = [];
+  const check = (label, passed, detail = '') => {
+    lines.push(`${passed ? 'ok  ' : 'FAIL'} ${label}${detail ? ` (${detail})` : ''}`);
+  };
+  // Files go to PHP as the bytes the server sent, never through a JS string.
+  const fetchBytes = async url => new Uint8Array(await (await fetch(url)).arrayBuffer());
+  const concat = (a, b) => {
+    const joined = new Uint8Array(a.length + b.length);
+    joined.set(a);
+    joined.set(b, a.length);
+    return joined;
+  };
+
+  const iniText = concat(await fetchBytes('php-legacy.ini'),
+    PhpRuntime.encodeLatin1('\ndisplay_errors = On\nerror_log =\n'));
+  const php = await PhpRuntime.create(createPhp, { iniText });
+  php.FS.mkdirTree('/var/www');
+  for (const script of ['state.php', 'env.php', 'fatal.php', 'exit.php']) {
+    php.FS.writeFile(`/var/www/${script}`, await fetchBytes(`www/${script}`));
+  }
+  const probe = (script, options = {}) => php.request({
+    scriptFilename: `/var/www/${script}`,
+    scriptName: `/${script}`,
+    headers: { Host: location.host },
+    ...options,
+  });
+  const fresh = 'globals=fresh\nstatic=1\nstate=ok\n';
+
+  check('startup logs nothing', php.startupLog.length === 0, php.startupLog.join(' '));
+
+  const env = probe('env.php', { queryString: 'n=7', headers: { Host: location.host, Cookie: 'probe=from-page' } });
+  check('GET, cookie and Host reach PHP', /^get=7$/m.test(env.text) && /^cookie=from-page$/m.test(env.text)
+    && env.text.includes(`getenv_host=${location.host}\n`), env.text.split('\n').slice(2, 6).join(' | '));
+
+  let allFresh = true;
+  for (let i = 0; i < 3; i++) {
+    allFresh = allFresh && probe('state.php').text === fresh;
+  }
+  check('state is fresh on every request', allFresh);
+
+  const fatal = probe('fatal.php');
+  check('a fatal error ends the request only', /Call to undefined function/.test(fatal.text)
+    && fatal.log.length === 1 && probe('state.php').text === fresh, `log: ${fatal.log.length} entry`);
+  check('exit() ends the request only', probe('exit.php').text === 'before exit\nexit message\n'
+    && probe('state.php').text === fresh);
+
+  const scripts = ['state.php', 'env.php', 'fatal.php', 'exit.php'];
+  const memoryBefore = php.memoryBytes;
+  const started = performance.now();
+  for (let i = 0; i < 2000; i++) {
+    probe(scripts[i % scripts.length]);
+  }
+  const elapsed = performance.now() - started;
+  check('2000 more requests leave memory flat', php.memoryBytes === memoryBefore,
+    `${(elapsed / 2000).toFixed(2)} ms per request`);
+  check('and the instance still answers', probe('state.php').text === fresh);
+
+  // PHP's own ext/mysql, with SQLite in this tab as its server.
+  const SQL = await initSqlJs({ locateFile: file => `sqljs/${file}` });
+  const withMysql = await PhpRuntime.create(createPhp, {
+    iniSearchPath: '/etc/php-mysql',
+    iniText,
+    mysql: new MysqlOnSqlite(SQL, { users: { typo3: 'typo3' } }),
+  });
+  withMysql.FS.mkdirTree('/var/www');
+  withMysql.FS.writeFile('/var/www/mysql.php', await fetchBytes('www/mysql.php'));
+  const mysqlRun = withMysql.request({ scriptFilename: '/var/www/mysql.php', scriptName: '/mysql.php' });
+  check("PHP's ext/mysql against SQLite", mysqlRun.text.trim().endsWith('MYSQL OK'),
+    mysqlRun.text.split('\n').filter(line => !line.startsWith('ok ')).join(' | '));
+
+  lines.push(lines.some(line => line.startsWith('FAIL')) ? 'REQUEST LOOP FAIL' : 'REQUEST LOOP OK');
+  document.getElementById('out').textContent = lines.join('\n');
+  window.probeOutput = lines;
+})().catch(error => {
+  window.probeOutput = [`REQUEST LOOP FAIL: ${error && error.stack || error}`];
+});
+</script>

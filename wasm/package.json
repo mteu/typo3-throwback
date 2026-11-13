@@ -1,0 +1,11 @@
+{
+  "name": "typo3-throwback-wasm",
+  "private": true,
+  "description": "SQLite for the mysql shim, and Playwright for the browser checks. Pinned exactly; package-lock.json records the integrity hashes.",
+  "dependencies": {
+    "sql.js": "1.14.2"
+  },
+  "devDependencies": {
+    "playwright": "1.63.0"
+  }
+}

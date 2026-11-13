@@ -4,12 +4,17 @@
 #
 #   /        site/landing/
 #   /docs/   site/docs/, built by Zensical
-#   /3.3/    TYPO3 3.3.0 in the browser: PHP 4.4.9 built to WebAssembly, and
-#            checked by php4-wasm/check.sh, headless Chromium included, before
-#            anything is published
+#   /wasm/   what the browser releases share, published once: PHP 4.4.9 built
+#            to WebAssembly, sql.js, the runtime, each release's archive
+#   /3.3/    TYPO3 3.3.0 in the browser: its shell page and service worker
+#   /3.8/    TYPO3 3.8.1 in the browser, the same way
 #
-# Each browser build gets a directory of its own, because each registers a
-# service worker for its directory. Nothing at the root or under /docs/ does.
+# wasm/check.sh checks all of the browser part, headless Chromium included,
+# before anything is published, and wasm/site/assemble.sh lays it out.
+#
+# Each release gets a directory of its own, because each registers a service
+# worker for its directory. Nothing at the root, under /docs/ or under /wasm/
+# does.
 #
 # A change to the docs alone rebuilds PHP too, because the deployment needs
 # every part. That costs the WebAssembly build's time, once per change.
@@ -35,10 +40,14 @@ name: pages
 on:
   push:
     paths:
-      - 'php4-wasm/**'
+      - 'wasm/**'
       - 'vendor-src/php-4.4.9/**'
       - 'vendor-src/typo3-3.3.0/**'
+      - 'vendor-src/typo3-3.8.1/**'
       - '3.3/provision.php'
+      - '3.3/LICENCES.md'
+      - '3.8/provision.php'
+      - '3.8/LICENCES.md'
       - 'php4-base/php-legacy.ini'
       - 'LICENSE'
       - 'site/**'
@@ -82,7 +91,7 @@ jobs:
           "$RUNNER_TEMP/emsdk/emsdk" activate "$PINNED_EMSDK_VERSION"
 
       - name: Install sql.js and Playwright's Chromium
-        working-directory: php4-wasm
+        working-directory: wasm
         run: |
           npm ci --no-audit --no-fund
           npx playwright install --with-deps chromium
@@ -90,18 +99,18 @@ jobs:
       - name: Build PHP 4.4.9 to WebAssembly
         run: |
           source "$RUNNER_TEMP/emsdk/emsdk_env.sh"
-          php4-wasm/build.sh . "$RUNNER_TEMP/php4wasm"
+          wasm/php-4.4.9/build.sh . "$RUNNER_TEMP/wasm/php-4.4.9"
 
       # Ends by assembling the site and driving it in Chromium.
       - name: Run every check, the site in a browser included
         run: |
           source "$RUNNER_TEMP/emsdk/emsdk_env.sh"
-          php4-wasm/check.sh . "$RUNNER_TEMP/php4wasm"
+          wasm/check.sh . "$RUNNER_TEMP/wasm"
 
       - uses: actions/upload-artifact@v7
         with:
-          name: wasm-3.3
-          path: ${{ runner.temp }}/php4wasm/out/site
+          name: wasm-site
+          path: ${{ runner.temp }}/wasm/site
           if-no-files-found: error
 
   # --strict: a broken link or a page missing from the navigation fails the build, not the published site.
@@ -134,15 +143,16 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # wasm/ and one directory per release, at the root.
+      - uses: actions/download-artifact@v8
+        with:
+          name: wasm-site
+          path: ${{ runner.temp }}/pages
+
       - uses: actions/download-artifact@v8
         with:
           name: docs
           path: ${{ runner.temp }}/pages/docs
-
-      - uses: actions/download-artifact@v8
-        with:
-          name: wasm-3.3
-          path: ${{ runner.temp }}/pages/3.3
 
       # The front page last, so that a file of its own can never be overwritten
       # by a build, and a build's directory never by the front page.
@@ -157,16 +167,19 @@ jobs:
             fi
           done
           cp -r site/landing/. "$pages/"
-          # Only a browser build may register a service worker, and only in
-          # its own directory.
-          if find "$pages" -maxdepth 1 -name 'sw*.js' | grep -q .; then
-            echo "::error::a service worker at the root would control every page"
+          # Only a release may register a service worker, and only in its own
+          # directory.
+          if find "$pages" "$pages/wasm" -maxdepth 1 -name 'sw*.js' | grep -q .; then
+            echo "::error::a service worker at the root or in wasm/ would control pages it must not"
             exit 1
           fi
           test -f "$pages/index.html"
           test -f "$pages/docs/index.html"
-          test -f "$pages/3.3/index.html"
-          test -f "$pages/3.3/sw.js"
+          for release in 3.3 3.8; do
+            test -f "$pages/$release/index.html"
+            test -f "$pages/$release/sw.js"
+          done
+          test -f "$pages/wasm/LICENSES.txt"
 
       - uses: actions/upload-pages-artifact@v5
         with:

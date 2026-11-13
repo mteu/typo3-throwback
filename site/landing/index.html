@@ -52,17 +52,17 @@
 
     <section id="rooms">
       <h2>The exhibits</h2>
-      <p class="sub">Five rooms, in order. The windows are empty until real captures are taken from the running stacks.</p>
+      <p class="sub">Five rooms, in order. A window shows its release once a capture of it has been taken.</p>
       <ol class="rooms">
         <li class="room">
           <h3><img src="marks/mark1-blue-2002.png" alt=""> TYPO3 3.3.0 <small>2002-06-03</small></h3>
           <figure class="shown">
-          <div class="bw ie6c" role="img" aria-label="Internet Explorer 6 window, capture pending">
+          <div class="bw ie6c" role="img" aria-label="Internet Explorer 6 window, showing the TYPO3 3.3.0 backend right after login: the module menu on the left and the description of the available modules">
             <div class="tb"><span class="clip">TYPO3 3.3.0 Backend - Microsoft Internet Explorer</span><span class="cap"><i>_</i><i>&#9633;</i><i>x</i></span></div>
             <div class="menu"><span>File</span><span>Edit</span><span>View</span><span>Favorites</span><span>Tools</span><span>Help</span></div>
             <div class="tools"><span>Back</span><span>Forward</span><span>Stop</span><span class="hide-sm">Refresh</span><span class="hide-sm">Home</span><span class="hide-sm">Search</span></div>
             <div class="addr"><span>Address</span><span class="field clip">http://127.0.0.1:8033/typo3/</span><span>Go</span></div>
-            <div class="pane"><div><b>Capture pending</b>TYPO3 3.3.0 backend</div></div>
+            <div class="pane capture"><img src="captures/3.3.0-backend.png" alt="" width="1024" height="640" loading="lazy"></div>
             <div class="st"><span>Done</span><span>Internet</span></div>
           </div>
           </figure>
@@ -72,19 +72,19 @@
         <li class="room">
           <h3><img src="marks/mark2-sheets-2003.png" alt=""> TYPO3 3.8.1 <small>2005-11-14</small></h3>
           <figure class="shown">
-          <div class="bw ie6x" role="img" aria-label="Internet Explorer 6 on Windows XP, capture pending">
+          <div class="bw ie6x" role="img" aria-label="Internet Explorer 6 on Windows XP, showing the TYPO3 3.8.1 backend right after login: the module menu on the left, the About modules page and a yellow security warning about the default passwords">
             <div class="tb"><span class="clip">TYPO3 3.8.1 Backend - Microsoft Internet Explorer</span><span class="cap"><i>_</i><i>&#9633;</i><i>x</i></span></div>
             <div class="body">
               <div class="menu"><span>File</span><span>Edit</span><span>View</span><span>Favorites</span><span>Tools</span><span>Help</span></div>
               <div class="tools"><span>Back</span><span>&nbsp;</span><span class="hide-sm">Stop</span><span class="hide-sm">Refresh</span></div>
               <div class="addr"><span>Address</span><span class="field clip">http://127.0.0.1:8038/typo3/</span><em>Go</em></div>
-              <div class="pane"><div><b>Capture pending</b>TYPO3 3.8.1 backend</div></div>
+              <div class="pane capture"><img src="captures/3.8.1-backend.png" alt="" width="1024" height="640" loading="lazy"></div>
               <div class="st"><span>Done</span><span>Internet</span></div>
             </div>
           </div>
           </figure>
-          <dl class="facts"><dt>Runs on</dt><dd>PHP 5.6.40, MySQL 5.5</dd><dt>Known for</dt><dd>The last release before 4.0</dd></dl>
-          <p><span class="pill">In your browser: not yet</span> <a class="pill go" href="docs/docker/3.8/">With Docker</a></p>
+          <dl class="facts"><dt>Runs on</dt><dd>PHP 5.6.40, MySQL 5.5; PHP 4.4.9 in your browser</dd><dt>Known for</dt><dd>The last release before 4.0</dd></dl>
+          <p><a class="pill go" href="3.8/">In your browser</a> <a class="pill go" href="docs/docker/3.8/">With Docker</a></p>
         </li>
         <li class="room">
           <h3><img src="marks/mark3-orange-green-4x.png" alt=""> TYPO3 4.0.13 <small>2009-07-02</small></h3>
@@ -133,9 +133,12 @@
       <div class="doors">
         <div>
           <h2>Try it in your browser</h2>
-          <p class="sub" style="margin-bottom:0">TYPO3 3.3.0 runs in your own tab, on PHP 4.4.9 compiled to WebAssembly. There is nothing to install, and nothing runs on a server. Your site is kept in your browser until you reset it. The later releases follow. <a href="docs/browser/">How it works.</a></p>
+          <p class="sub" style="margin-bottom:0">TYPO3 3.3.0 and 3.8.1 run in your own tab, on PHP 4.4.9 compiled to WebAssembly. There is nothing to install, and nothing runs on a server. Your site is kept in your browser until you reset it. The later releases follow. <a href="docs/browser/">How it works.</a></p>
         </div>
-        <a class="btn solid" href="3.3/">Open TYPO3 3.3.0</a>
+        <div class="btns">
+          <a class="btn solid" href="3.3/">Open TYPO3 3.3.0</a>
+          <a class="btn solid" href="3.8/">Open TYPO3 3.8.1</a>
+        </div>
       </div>
     </section>
 
@@ -151,7 +154,7 @@ docker compose -f typo3-3.3.yaml up -d
 
   <footer>
     <p>Not affiliated with or endorsed by the TYPO3 Association. "TYPO3" is a registered trademark of the TYPO3 Association.</p>
-    <p>The browser windows are drawn in CSS, not captured.</p>
+    <p>The browser windows are drawn in CSS. What a window shows is a capture of its release, running on this site.</p>
   </footer>
 </div>
 
