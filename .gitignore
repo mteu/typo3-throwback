@@ -1,3 +1,4 @@
+/.build/
 __pycache__/
 *.pyc
 php4-wasm/node_modules/
