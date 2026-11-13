@@ -1,0 +1,274 @@
+<!doctype html>
+<html lang="en" class="no-js">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>typo3-throwback: a museum of TYPO3</title>
+  <meta name="description" content="A trip down memory lane: run five real TYPO3 releases from 2002 to 2017, preserved so they still work.">
+  <link rel="icon" href="marks/mark4-orange-2012.png" type="image/png">
+  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="frames.css">
+  <script>document.documentElement.classList.remove('no-js');</script>
+</head>
+<body>
+<a class="skip" href="#rooms">Skip to the exhibits</a>
+<div class="wrap">
+  <header class="top">
+    <a class="brand" href="./">typo3<b>-</b>throwback</a>
+    <nav aria-label="Main">
+      <a href="#rooms">Exhibits</a>
+      <a href="#doors">In your browser</a>
+      <a href="docs/">Documentation</a>
+      <a href="https://github.com/mteu/typo3-throwback">GitHub</a>
+    </nav>
+  </header>
+
+  <main>
+    <div class="hero">
+      <div>
+        <p class="eyebrow">Run TYPO3 as it was · Five releases</p>
+        <h1>A trip down <em>memory lane</em>, 2002 to 2017.</h1>
+        <p class="lead">Five real TYPO3 releases, from 3.3.0 in 2002 to 6.2.31 in 2017, still run today. They are not mock-ups. They are the original archives, checksum-verified, on PHP 4.4.9 for 3.3.0 and PHP 5.6 for the rest. Start in 2002 and watch the mark change.</p>
+        <div class="btns">
+          <a class="btn solid" href="#rooms">Walk the exhibits</a>
+          <a class="btn" href="3.3/">Open 3.3.0 in your browser</a>
+        </div>
+      </div>
+
+      <figure class="plate-wrap" style="margin:0">
+        <div class="plate" id="plate">
+          <canvas id="morph" width="512" height="512" aria-hidden="true"></canvas>
+          <img src="marks/mark1-blue-2002.png" alt="The blue TYPO3 mark of 2002" data-year="2002" data-name="Blue soul" class="on">
+          <img src="marks/mark2-sheets-2003.png" alt="Three overlapping sheets in green, blue and orange" data-year="2003" data-name="Three sheets">
+          <img src="marks/mark3-orange-green-4x.png" alt="The orange and green TYPO3 mark" data-year="2005" data-name="Orange and green">
+          <img src="marks/mark4-orange-2012.png" alt="The orange TYPO3 mark" data-year="2012" data-name="Orange">
+        </div>
+        <figcaption>
+          <div class="label" id="label" aria-live="off"></div>
+          <ol class="ticks" id="ticks" aria-label="Choose a mark"></ol>
+        </figcaption>
+      </figure>
+    </div>
+
+    <section id="rooms">
+      <h2>The exhibits</h2>
+      <p class="sub">Five rooms, in order. The windows are empty until real captures are taken from the running stacks.</p>
+      <ol class="rooms">
+        <li class="room">
+          <h3><img src="marks/mark1-blue-2002.png" alt=""> TYPO3 3.3.0 <small>2002-06-03</small></h3>
+          <figure class="shown">
+          <div class="bw ie6c" role="img" aria-label="Internet Explorer 6 window, capture pending">
+            <div class="tb"><span class="clip">TYPO3 3.3.0 Backend - Microsoft Internet Explorer</span><span class="cap"><i>_</i><i>&#9633;</i><i>x</i></span></div>
+            <div class="menu"><span>File</span><span>Edit</span><span>View</span><span>Favorites</span><span>Tools</span><span>Help</span></div>
+            <div class="tools"><span>Back</span><span>Forward</span><span>Stop</span><span class="hide-sm">Refresh</span><span class="hide-sm">Home</span><span class="hide-sm">Search</span></div>
+            <div class="addr"><span>Address</span><span class="field clip">http://127.0.0.1:8033/typo3/</span><span>Go</span></div>
+            <div class="pane"><div><b>Capture pending</b>TYPO3 3.3.0 backend</div></div>
+            <div class="st"><span>Done</span><span>Internet</span></div>
+          </div>
+          </figure>
+          <dl class="facts"><dt>Runs on</dt><dd>PHP 4.4.9, MySQL 5.5</dd><dt>Known for</dt><dd>The oldest publicly available release</dd></dl>
+          <p><a class="pill go" href="3.3/">In your browser</a> <a class="pill go" href="docs/docker/3.3/">With Docker</a></p>
+        </li>
+        <li class="room">
+          <h3><img src="marks/mark2-sheets-2003.png" alt=""> TYPO3 3.8.1 <small>2005-11-14</small></h3>
+          <figure class="shown">
+          <div class="bw ie6x" role="img" aria-label="Internet Explorer 6 on Windows XP, capture pending">
+            <div class="tb"><span class="clip">TYPO3 3.8.1 Backend - Microsoft Internet Explorer</span><span class="cap"><i>_</i><i>&#9633;</i><i>x</i></span></div>
+            <div class="body">
+              <div class="menu"><span>File</span><span>Edit</span><span>View</span><span>Favorites</span><span>Tools</span><span>Help</span></div>
+              <div class="tools"><span>Back</span><span>&nbsp;</span><span class="hide-sm">Stop</span><span class="hide-sm">Refresh</span></div>
+              <div class="addr"><span>Address</span><span class="field clip">http://127.0.0.1:8038/typo3/</span><em>Go</em></div>
+              <div class="pane"><div><b>Capture pending</b>TYPO3 3.8.1 backend</div></div>
+              <div class="st"><span>Done</span><span>Internet</span></div>
+            </div>
+          </div>
+          </figure>
+          <dl class="facts"><dt>Runs on</dt><dd>PHP 5.6.40, MySQL 5.5</dd><dt>Known for</dt><dd>The last release before 4.0</dd></dl>
+          <p><span class="pill">In your browser: not yet</span> <a class="pill go" href="docs/docker/3.8/">With Docker</a></p>
+        </li>
+        <li class="room">
+          <h3><img src="marks/mark3-orange-green-4x.png" alt=""> TYPO3 4.0.13 <small>2009-07-02</small></h3>
+          <figure class="shown">
+          <div class="bw ie7" role="img" aria-label="Internet Explorer 7 on Windows XP, capture pending">
+            <div class="tb"><span class="clip">TYPO3 4.0.13 Backend - Windows Internet Explorer</span><span class="cap"><i>_</i><i>&#9633;</i><i>x</i></span></div>
+            <div class="body">
+              <div class="nav"><span class="orb"></span><span class="orb"></span><span class="field clip">http://127.0.0.1/typo3/</span><span class="search clip hide-sm">Live Search</span></div>
+              <div class="tabs"><span class="star">&#9733;</span><span class="tab clip">TYPO3 4.0.13 Backend</span></div>
+              <div class="pane"><div><b>Capture pending</b>TYPO3 4.0.13 backend</div></div>
+              <div class="st"><span>Done</span><span>Internet</span><span class="hide-sm">100%</span></div>
+            </div>
+          </div>
+          </figure>
+          <dl class="facts"><dt>Runs on</dt><dd>PHP 5.6.40, MySQL 5.5</dd><dt>Known for</dt><dd>The only 4.0 release the feed lists</dd></dl>
+          <p><span class="pill">In your browser: not yet</span> <a class="pill go" href="docs/docker/4.0/">With Docker</a></p>
+        </li>
+        <li class="room">
+          <h3><img src="marks/mark4-orange-2012.png" alt=""> TYPO3 4.5.40 <small>2015-02-19</small></h3>
+          <figure class="shown">
+          <div class="bw chr chr40" role="img" aria-label="Chrome 40 on Windows 7 window, capture pending">
+            <div class="strip"><span class="tab"><span class="clip">TYPO3 4.5.40 Backend</span><i>x</i></span><span class="newtab"></span><span class="cap"><i>_</i><i>&#9633;</i><i>x</i></span></div>
+            <div class="bar"><span class="cb">&larr;</span><span class="cb">&rarr;</span><span class="cb">&#8635;</span><span class="omni"><span class="clip">127.0.0.1/typo3/</span><span class="star">&#9734;</span></span><span class="menu">&#8801;</span></div>
+            <div class="pane"><div><b>Capture pending</b>TYPO3 4.5.40 backend</div></div>
+          </div>
+          </figure>
+          <dl class="facts"><dt>Runs on</dt><dd>PHP 5.6.40, MySQL 5.5</dd><dt>Known for</dt><dd>UTF-8 by default, the first LTS</dd></dl>
+          <p><span class="pill">In your browser: not yet</span> <a class="pill go" href="docs/docker/4.5/">With Docker</a></p>
+        </li>
+        <li class="room">
+          <h3><img src="marks/mark4-orange-2012.png" alt=""> TYPO3 6.2.31 <small>2017-04-18</small></h3>
+          <figure class="shown">
+          <div class="bw chr chr57" role="img" aria-label="Chrome 57 on Windows 7 window, capture pending">
+            <div class="strip"><span class="tab"><span class="clip">TYPO3 6.2.31 Backend</span><i>x</i></span><span class="newtab"></span><span class="cap"><i>_</i><i>&#9633;</i><i>x</i></span></div>
+            <div class="bar"><span class="cb">&larr;</span><span class="cb">&rarr;</span><span class="cb">&#8635;</span><span class="omni"><span class="clip">127.0.0.1/typo3/</span><span class="star">&#9734;</span></span><span class="menu">&#8801;</span></div>
+            <div class="pane"><div><b>Capture pending</b>TYPO3 6.2.31 backend</div></div>
+          </div>
+          </figure>
+          <dl class="facts"><dt>Runs on</dt><dd>PHP 5.6.40, MySQL 5.5</dd><dt>Known for</dt><dd>The last public 6.2 LTS</dd></dl>
+          <p><span class="pill">In your browser: not yet</span> <a class="pill go" href="docs/docker/6.2/">With Docker</a></p>
+        </li>
+      </ol>
+    </section>
+
+    <section id="doors">
+      <div class="doors">
+        <div>
+          <h2>Try it in your browser</h2>
+          <p class="sub" style="margin-bottom:0">TYPO3 3.3.0 runs in your own tab, on PHP 4.4.9 compiled to WebAssembly. There is nothing to install, and nothing runs on a server. Your site is kept in your browser until you reset it. The later releases follow. <a href="docs/browser/">How it works.</a></p>
+        </div>
+        <a class="btn solid" href="3.3/">Open TYPO3 3.3.0</a>
+      </div>
+    </section>
+
+    <section id="visit">
+      <h2>Or run one yourself</h2>
+      <p class="sub">All five releases run on your own machine, with Docker Compose 2.23.1 or newer and one downloaded file.</p>
+      <pre>curl -fsSL -o typo3-3.3.yaml https://raw.githubusercontent.com/mteu/typo3-throwback/main/3.3/compose.yaml
+docker compose -f typo3-3.3.yaml up -d
+# then open http://127.0.0.1:8033/</pre>
+      <p class="warn">These stacks are insecure by design. They carry years of known, unpatched remote code execution bugs. Keep them on loopback and never expose them. <a href="docs/docker/">Read the documentation.</a></p>
+    </section>
+  </main>
+
+  <footer>
+    <p>Not affiliated with or endorsed by the TYPO3 Association. "TYPO3" is a registered trademark of the TYPO3 Association.</p>
+    <p>The browser windows are drawn in CSS, not captured.</p>
+  </footer>
+</div>
+
+<script>
+(function () {
+  var imgs = Array.prototype.slice.call(document.querySelectorAll('#plate img'));
+  var label = document.getElementById('label');
+  var ticks = document.getElementById('ticks');
+  var plate = document.getElementById('plate');
+  var canvas = document.getElementById('morph');
+  var N = imgs.length;
+  var still = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  var shown = 0, timer = null;
+
+  imgs.forEach(function (img, n) {
+    var li = document.createElement('li');
+    var b = document.createElement('button');
+    b.type = 'button'; b.textContent = img.dataset.year;
+    b.addEventListener('click', function () { stop(); goTo(n); });
+    li.appendChild(b); ticks.appendChild(li);
+  });
+
+  function setLabel(n) {
+    if (n === shown && label.firstChild) return;
+    shown = n;
+    var d = imgs[n].dataset;
+    label.innerHTML = '';
+    var s = document.createElement('strong'); s.textContent = d.name + ', ' + d.year;
+    label.appendChild(s);
+    Array.prototype.forEach.call(ticks.querySelectorAll('button'), function (b, k) {
+      if (k === n) b.setAttribute('aria-current', 'true'); else b.removeAttribute('aria-current');
+    });
+  }
+
+  /* Fallback: the cross-fade. Used until the morph textures have loaded, and for
+     good if they never do. */
+  var engine = { goTo: function (n) {
+    imgs.forEach(function (img, k) { img.classList.toggle('on', k === n); });
+    setLabel(n);
+  } };
+  function goTo(n) { engine.goTo(n); }
+  function next() { goTo((shown + 1) % N); }
+  function start() { if (!still && !timer) timer = setInterval(next, engine.period || 3800); }
+  function stop() { clearInterval(timer); timer = null; }
+  goTo(0); start();
+  plate.addEventListener('mouseenter', stop);
+  plate.addEventListener('mouseleave', start);
+
+  /* The morph. Every mark is a distance field; blending two fields and drawing
+     where the blend is positive gives a shape that slides from one outline to
+     the next. Color is blended alongside. `pos` runs 0..N and wraps, so the
+     last mark flows back into the first. */
+  var SIZE = 512, REACH = 40, STEP_MS = 1700, HOLD_MS = 2300, JUMP_MS = 420;
+  var names = ['0', '1', '2', '3'];
+  var sdf = [], col = [], pending = N * 2;
+
+  function read(src, into, k, withAlpha) {
+    var im = new Image();
+    im.onload = function () {
+      var c = document.createElement('canvas'); c.width = c.height = SIZE;
+      var x = c.getContext('2d', { willReadFrequently: true });
+      x.drawImage(im, 0, 0, SIZE, SIZE);
+      into[k] = x.getImageData(0, 0, SIZE, SIZE).data;
+      if (--pending === 0) ready();
+    };
+    im.src = src;
+  }
+  names.forEach(function (n, k) { read('morph/sdf' + n + '.png', sdf, k); read('morph/col' + n + '.png', col, k); });
+
+  function ready() {
+    var ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    var frame = ctx.createImageData(SIZE, SIZE), out = frame.data;
+    var pos = shown, target = shown, speed = 0, last = 0, raf = 0, hold = 0;
+
+    function ease(t) { return t < .5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2; }
+
+    function draw() {
+      var a = Math.floor(pos) % N, b = (a + 1) % N, e = ease(pos - Math.floor(pos));
+      var sa = sdf[a], sb = sdf[b], ca = col[a], cb = col[b], k = REACH / 127;
+      for (var p = 0, q = 0; p < SIZE * SIZE; p++, q += 4) {
+        var da = (sa[q] - 128) * k, db = (sb[q] - 128) * k;
+        var cov = (da + (db - da) * e) + .5;
+        if (cov <= 0) { out[q] = out[q + 1] = out[q + 2] = out[q + 3] = 255; continue; }
+        if (cov > 1) cov = 1;
+        var r = ca[q] + (cb[q] - ca[q]) * e, g = ca[q + 1] + (cb[q + 1] - ca[q + 1]) * e, bl = ca[q + 2] + (cb[q + 2] - ca[q + 2]) * e;
+        out[q] = 255 + (r - 255) * cov; out[q + 1] = 255 + (g - 255) * cov; out[q + 2] = 255 + (bl - 255) * cov; out[q + 3] = 255;
+      }
+      ctx.putImageData(frame, 0, 0);
+      // The label follows whichever mark is nearer, so the words change at the
+      // half-way point of a morph rather than before or after it.
+      setLabel(Math.round(pos) % N);
+    }
+
+    function tick(now) {
+      var dt = last ? Math.min(now - last, 60) : 16; last = now;
+      var dist = (target - pos + N) % N;
+      if (dist < 1e-3) { pos = target; draw(); raf = 0; last = 0; return; }
+      pos = (pos + Math.min(dist, speed * dt)) % N;
+      draw(); raf = requestAnimationFrame(tick);
+    }
+
+    engine.period = STEP_MS + HOLD_MS;
+    engine.goTo = function (n) {
+      if (still) { pos = target = n; draw(); return; }
+      var steps = (n - Math.round(pos) + N) % N || (n === Math.round(pos) ? 0 : N);
+      target = n;
+      // A click scrubs forward through the marks in between, quickly; the
+      // automatic advance takes the slow, deliberate single step.
+      speed = steps > 1 ? 1 / JUMP_MS : 1 / STEP_MS;
+      if (!raf) { last = 0; raf = requestAnimationFrame(tick); }
+    };
+    pos = target = shown; draw();
+    plate.classList.add('morph');
+    if (timer) { stop(); start(); }
+  }
+})();
+</script>
+</body>
+</html>

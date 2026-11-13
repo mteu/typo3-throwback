@@ -1,0 +1,103 @@
+/* Browser frames. Each skin is drawn in CSS from what the browser looked like at
+   the time; nothing here is a screenshot. The pane at the bottom is where a real
+   capture of the running release goes. Everything is fixed-pixel on purpose: a
+   2002 window did not reflow, and the frame scales as one object. */
+.bw { --u: 1px; font: 11px/1 Tahoma, Verdana, Geneva, sans-serif; color: #000; width: 100%; user-select: none; box-shadow: 4px 8px 0 rgba(0,0,0,.10); overflow: hidden; container-type: inline-size; }
+.bw .pane { aspect-ratio: 16 / 10; display: grid; place-items: center; text-align: center; padding: 12px; color: #444;
+  background: #fff repeating-linear-gradient(135deg, #fff 0 10px, #f1efe9 10px 20px); }
+.bw .pane b { display: block; font-size: 12px; margin-bottom: 3px; }
+.bw .row { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.bw .clip { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; min-width: 0; }
+.bw .fav { width: 12px; height: 12px; flex: none; background: center / contain no-repeat; }
+
+/* Internet Explorer 6, classic theme (mid 2002) */
+.ie6c { background: #c0c0c0; border: 2px solid; border-color: #dfdfdf #000 #000 #dfdfdf; outline: 1px solid #808080; outline-offset: -3px; padding: 2px; }
+.ie6c .tb { background: linear-gradient(90deg, #000080, #1084d0); color: #fff; font-weight: 700; padding: 3px; display: flex; align-items: center; gap: 4px; }
+.ie6c .tb .clip { flex: 1; }
+.ie6c .cap { display: flex; gap: 2px; }
+.ie6c .cap i { font-style: normal; width: 16px; height: 14px; background: #c0c0c0; color: #000; display: grid; place-items: center; font-size: 9px; border: 1px solid; border-color: #fff #000 #000 #fff; }
+.ie6c .cap i:last-child { margin-left: 2px; }
+.ie6c .menu { display: flex; gap: 10px; padding: 3px 4px; border-bottom: 1px solid #808080; overflow: hidden; white-space: nowrap; }
+.ie6c .tools { display: flex; gap: 2px; padding: 3px 2px; border-bottom: 1px solid #808080; overflow: hidden; }
+.ie6c .tools span { display: grid; justify-items: center; gap: 2px; padding: 2px 5px; font-size: 10px; min-width: 38px; }
+.ie6c .tools span::before { content: ""; width: 16px; height: 16px; background: linear-gradient(135deg, #2a6ac8, #7aaef0); border-radius: 50%; }
+.ie6c .tools span:nth-child(n+4)::before { background: linear-gradient(135deg, #888, #ccc); }
+.ie6c .addr { display: flex; align-items: center; gap: 6px; padding: 3px 4px; border-bottom: 1px solid #808080; }
+.ie6c .addr .field { flex: 1; background: #fff; border: 2px solid; border-color: #808080 #fff #fff #808080; padding: 2px 4px; }
+.ie6c .pane { margin: 2px 0; border: 2px solid; border-color: #808080 #fff #fff #808080; }
+.ie6c .st { display: flex; gap: 2px; }
+.ie6c .st span { border: 1px solid; border-color: #808080 #fff #fff #808080; padding: 2px 6px; }
+.ie6c .st span:first-child { flex: 1; }
+
+/* Internet Explorer 6 on Windows XP, Luna (late 2005) */
+.ie6x { background: #0831d9; border-radius: 8px 8px 0 0; padding: 0 3px 3px; font-family: Tahoma, Verdana, sans-serif; }
+.ie6x .tb { height: 26px; margin: 0 -3px; padding: 0 5px 0 8px; border-radius: 8px 8px 0 0; color: #fff; font-weight: 700; font-size: 12px; text-shadow: 1px 1px #0f1089; display: flex; align-items: center; gap: 6px;
+  background: linear-gradient(#0997ff 0, #0053ee 8%, #0050ee 40%, #06f 88%, #06f 93%, #005bff 95%, #003dd7 96%, #003dd7); }
+.ie6x .tb .clip { flex: 1; }
+.ie6x .cap { display: flex; gap: 2px; }
+.ie6x .cap i { width: 21px; height: 21px; border-radius: 3px; border: 1px solid #fff; display: grid; place-items: center; font: 700 10px Tahoma; font-style: normal; color: #fff; text-shadow: none; background: radial-gradient(circle at 30% 25%, #7ba6ff, #2159e0 70%); }
+.ie6x .cap i:last-child { background: radial-gradient(circle at 30% 25%, #f0a58f, #c8381c 70%); }
+.ie6x .body { background: #ece9d8; }
+.ie6x .menu { display: flex; gap: 10px; padding: 4px 6px; overflow: hidden; white-space: nowrap; border-bottom: 1px solid #d6d2c2; }
+.ie6x .tools { display: flex; gap: 3px; padding: 3px 4px; border-bottom: 1px solid #d6d2c2; overflow: hidden; }
+.ie6x .tools span { display: flex; align-items: center; gap: 3px; padding: 2px 4px; font-size: 11px; }
+.ie6x .tools span::before { content: ""; width: 20px; height: 20px; border-radius: 50%; background: radial-gradient(circle at 35% 30%, #9ee07a, #2f9a2c 75%); border: 1px solid #1a6d18; }
+.ie6x .tools span:nth-child(n+3)::before { background: radial-gradient(circle at 35% 30%, #fff, #b9c7e6 80%); border-color: #7b92c4; }
+.ie6x .addr { display: flex; align-items: center; gap: 6px; padding: 3px 4px; }
+.ie6x .addr .field { flex: 1; background: #fff; border: 1px solid #7f9db9; padding: 3px 4px; }
+.ie6x .addr em { font-style: normal; padding: 2px 8px; border: 1px solid #003c74; border-radius: 3px; background: linear-gradient(#fff, #ece9d8 85%, #d6d0c5); }
+.ie6x .pane { border: 1px solid #7f9db9; }
+.ie6x .st { display: flex; gap: 0; padding: 3px 4px 1px; }
+.ie6x .st span { padding: 2px 8px; border-left: 1px solid #aca899; }
+.ie6x .st span:first-child { flex: 1; border: 0; }
+
+/* Internet Explorer 7 on Windows XP (mid 2009) */
+.ie7 { background: #0831d9; border-radius: 8px 8px 0 0; padding: 0 3px 3px; font-family: Tahoma, Verdana, sans-serif; }
+.ie7 .tb { height: 26px; margin: 0 -3px; padding: 0 5px 0 8px; border-radius: 8px 8px 0 0; color: #fff; font-weight: 700; font-size: 12px; text-shadow: 1px 1px #0f1089; display: flex; align-items: center; gap: 6px;
+  background: linear-gradient(#0997ff 0, #0053ee 8%, #0050ee 40%, #06f 88%, #06f 93%, #005bff 95%, #003dd7 96%, #003dd7); }
+.ie7 .tb .clip { flex: 1; }
+.ie7 .cap { display: flex; gap: 2px; }
+.ie7 .cap i { width: 21px; height: 21px; border-radius: 3px; border: 1px solid #fff; display: grid; place-items: center; font: 700 10px Tahoma; font-style: normal; color: #fff; text-shadow: none; background: radial-gradient(circle at 30% 25%, #7ba6ff, #2159e0 70%); }
+.ie7 .cap i:last-child { background: radial-gradient(circle at 30% 25%, #f0a58f, #c8381c 70%); }
+.ie7 .body { background: #dfe9f5; }
+.ie7 .nav { display: flex; align-items: center; gap: 6px; padding: 5px 6px; background: linear-gradient(#e9f0fa, #cddcf0); }
+.ie7 .orb { width: 26px; height: 26px; flex: none; border-radius: 50%; background: radial-gradient(circle at 35% 25%, #d7f1ff, #4a9ad8 55%, #1f5fa8); border: 1px solid #27508a; box-shadow: inset 0 0 0 1px rgba(255,255,255,.5); }
+.ie7 .orb + .orb { margin-left: -10px; }
+.ie7 .field { flex: 1; background: #fff; border: 1px solid #7f9db9; padding: 4px 5px; }
+.ie7 .search { width: 28%; background: #fff; border: 1px solid #7f9db9; padding: 4px 5px; color: #888; font-style: italic; }
+.ie7 .tabs { display: flex; align-items: flex-end; gap: 4px; padding: 3px 6px 0; background: #cddcf0; border-bottom: 1px solid #7f9db9; }
+.ie7 .tabs .star { color: #e8a800; font-size: 13px; padding-bottom: 3px; }
+.ie7 .tabs .tab { background: #fff; border: 1px solid #7f9db9; border-bottom: 0; border-radius: 3px 3px 0 0; padding: 4px 10px; max-width: 60%; }
+.ie7 .pane { border: 0; }
+.ie7 .st { display: flex; padding: 3px 4px 1px; background: #ece9d8; }
+.ie7 .st span { padding: 2px 8px; border-left: 1px solid #aca899; }
+.ie7 .st span:first-child { flex: 1; border: 0; }
+
+/* Google Chrome on Windows 7 (2015 and 2017). The look barely moved in two
+   years; the two skins differ only in the details that did. */
+.chr { background: #bcd2ea; font-family: "Segoe UI", Tahoma, sans-serif; font-size: 11px; border-radius: 6px 6px 0 0; border: 1px solid #3b5b85; border-bottom: 0; padding: 0 0 0; }
+.chr .strip { display: flex; align-items: flex-end; height: 30px; padding: 0 0 0 8px; gap: 2px; background: linear-gradient(#cfe0f3, #a9c4e2); border-radius: 5px 5px 0 0; }
+.chr .tab { display: flex; align-items: center; gap: 6px; padding: 0 10px; height: 25px; max-width: 62%; background: #f2f2f2; border-radius: 6px 6px 0 0; box-shadow: 0 0 0 1px rgba(0,0,0,.28); }
+.chr .tab i { font-style: normal; color: #666; margin-left: auto; padding-left: 8px; }
+.chr .newtab { width: 26px; height: 18px; margin-bottom: 3px; background: rgba(255,255,255,.35); transform: skewX(20deg); border-radius: 2px; box-shadow: 0 0 0 1px rgba(0,0,0,.18); }
+.chr .cap { margin-left: auto; align-self: flex-start; display: flex; box-shadow: 0 0 0 1px rgba(0,0,0,.4); border-radius: 0 0 4px 4px; overflow: hidden; }
+.chr .cap i { font-style: normal; width: 28px; height: 18px; display: grid; place-items: center; font-size: 10px; color: #222; background: linear-gradient(#e8f0fa, #bcd0ea 50%, #a9c0e0 50%, #c7d9f0); border-right: 1px solid rgba(0,0,0,.25); }
+.chr .cap i:last-child { width: 42px; color: #fff; background: linear-gradient(#e7a090, #c9482e 50%, #b32d12 50%, #d4694e); border: 0; }
+.chr .bar { display: flex; align-items: center; gap: 8px; padding: 5px 8px; background: #f2f2f2; border-bottom: 1px solid #ccc; }
+.chr .bar .cb { color: #666; font-size: 14px; width: 14px; text-align: center; }
+.chr .omni { flex: 1; background: #fff; border: 1px solid #bbb; border-radius: 2px; padding: 4px 6px; display: flex; gap: 6px; align-items: center; }
+.chr .omni .clip { flex: 1; }
+.chr .omni .star { color: #bbb; }
+.chr .menu { color: #666; font-size: 15px; width: 14px; text-align: center; }
+.chr .pane { border: 0; }
+.chr57 .strip { background: linear-gradient(#e3ecf8, #c3d6ec); }
+.chr57 .tab { border-radius: 8px 8px 0 0; height: 26px; }
+.chr57 .omni { border-radius: 3px; border-color: #c6c6c6; }
+.chr57 .bar { background: #fff; }
+
+@container (max-width: 300px) {
+  .bw .hide-sm { display: none !important; }
+}
+@media (prefers-contrast: more) {
+  .bw .pane { background: #fff; }
+}
