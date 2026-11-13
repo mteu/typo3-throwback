@@ -379,8 +379,8 @@ jobs:
             echo "THROWBACK_MIRROR=docker.io/library" >> "$GITHUB_ENV"
           fi
 
-      # compose.yaml names the public repository's image. In any other
-      # repository, such as -src, TYPO3_IMAGE differs, and `up --no-build` would
+      # compose.yaml names the image of the mteu/typo3-throwback repository. In a fork
+      # TYPO3_IMAGE differs, and `up --no-build` would
       # pull the published image instead of testing this build. So the build
       # gets compose's name too, which pull_policy: missing then keeps.
       - name: Start the stack
@@ -578,8 +578,8 @@ jobs:
             echo "THROWBACK_MIRROR=docker.io/library" >> "$GITHUB_ENV"
           fi
 
-      # compose.yaml names the public repository's image. In any other
-      # repository, such as -src, TYPO3_IMAGE differs, and `up --no-build` would
+      # compose.yaml names the image of the mteu/typo3-throwback repository. In a fork
+      # TYPO3_IMAGE differs, and `up --no-build` would
       # pull the published image instead of testing this build. So the build
       # gets compose's name too, which pull_policy: missing then keeps.
       - name: Start the stack
@@ -775,8 +775,8 @@ jobs:
             echo "THROWBACK_MIRROR=docker.io/library" >> "$GITHUB_ENV"
           fi
 
-      # compose.yaml names the public repository's image. In any other
-      # repository, such as -src, TYPO3_IMAGE differs, and `up --no-build` would
+      # compose.yaml names the image of the mteu/typo3-throwback repository. In a fork
+      # TYPO3_IMAGE differs, and `up --no-build` would
       # pull the published image instead of testing this build. So the build
       # gets compose's name too, which pull_policy: missing then keeps.
       - name: Start the stack
@@ -1086,8 +1086,8 @@ jobs:
             echo "THROWBACK_MIRROR=docker.io/library" >> "$GITHUB_ENV"
           fi
 
-      # compose.yaml names the public repository's image. In any other
-      # repository, such as -src, TYPO3_IMAGE differs, and `up --no-build` would
+      # compose.yaml names the image of the mteu/typo3-throwback repository. In a fork
+      # TYPO3_IMAGE differs, and `up --no-build` would
       # pull the published image instead of testing this build. So the build
       # gets compose's name too, which pull_policy: missing then keeps.
       - name: Start the stack
@@ -1428,8 +1428,8 @@ jobs:
             echo "THROWBACK_MIRROR=docker.io/library" >> "$GITHUB_ENV"
           fi
 
-      # compose.yaml names the public repository's image. In any other
-      # repository, such as -src, TYPO3_IMAGE differs, and `up --no-build` would
+      # compose.yaml names the image of the mteu/typo3-throwback repository. In a fork
+      # TYPO3_IMAGE differs, and `up --no-build` would
       # pull the published image instead of testing this build. So the build
       # gets compose's name too, which pull_policy: missing then keeps.
       - name: Start the stack
