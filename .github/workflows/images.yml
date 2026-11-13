@@ -379,10 +379,22 @@ jobs:
             echo "THROWBACK_MIRROR=docker.io/library" >> "$GITHUB_ENV"
           fi
 
-      # pull_policy: missing finds the image in the local store and leaves the
-      # registry alone.
+      # compose.yaml names the public repository's image. In any other
+      # repository, such as -src, TYPO3_IMAGE differs, and `up --no-build` would
+      # pull the published image instead of testing this build. So the build
+      # gets compose's name too, which pull_policy: missing then keeps.
       - name: Start the stack
-        run: docker compose up -d --no-build
+        run: |
+          set -euo pipefail
+          compose_image=$(docker compose config --images | grep '/typo3:')
+          docker tag "$TYPO3_IMAGE:3.3.0" "$compose_image"
+          docker compose up -d --no-build
+          running=$(docker inspect -f '{{.Image}}' "$(docker compose ps -q web)")
+          built=$(docker image inspect -f '{{.Id}}' "$TYPO3_IMAGE:3.3.0")
+          if [ "$running" != "$built" ]; then
+            echo "::error::the stack runs $running, not this build, $built"
+            exit 1
+          fi
 
       - name: Wait for the frontend
         run: |
@@ -1074,8 +1086,22 @@ jobs:
             echo "THROWBACK_MIRROR=docker.io/library" >> "$GITHUB_ENV"
           fi
 
+      # compose.yaml names the public repository's image. In any other
+      # repository, such as -src, TYPO3_IMAGE differs, and `up --no-build` would
+      # pull the published image instead of testing this build. So the build
+      # gets compose's name too, which pull_policy: missing then keeps.
       - name: Start the stack
-        run: docker compose up -d --no-build
+        run: |
+          set -euo pipefail
+          compose_image=$(docker compose config --images | grep '/typo3:')
+          docker tag "$TYPO3_IMAGE:4.5.40" "$compose_image"
+          docker compose up -d --no-build
+          running=$(docker inspect -f '{{.Image}}' "$(docker compose ps -q web)")
+          built=$(docker image inspect -f '{{.Id}}' "$TYPO3_IMAGE:4.5.40")
+          if [ "$running" != "$built" ]; then
+            echo "::error::the stack runs $running, not this build, $built"
+            exit 1
+          fi
 
       - name: Wait for the frontend
         run: |
@@ -1402,8 +1428,22 @@ jobs:
             echo "THROWBACK_MIRROR=docker.io/library" >> "$GITHUB_ENV"
           fi
 
+      # compose.yaml names the public repository's image. In any other
+      # repository, such as -src, TYPO3_IMAGE differs, and `up --no-build` would
+      # pull the published image instead of testing this build. So the build
+      # gets compose's name too, which pull_policy: missing then keeps.
       - name: Start the stack
-        run: $COMPOSE up -d --no-build
+        run: |
+          set -euo pipefail
+          compose_image=$($COMPOSE config --images | grep '/typo3:')
+          docker tag "$TYPO3_IMAGE:6.2.31" "$compose_image"
+          $COMPOSE up -d --no-build
+          running=$(docker inspect -f '{{.Image}}' "$($COMPOSE ps -q web)")
+          built=$(docker image inspect -f '{{.Id}}' "$TYPO3_IMAGE:6.2.31")
+          if [ "$running" != "$built" ]; then
+            echo "::error::the stack runs $running, not this build, $built"
+            exit 1
+          fi
 
       # Longer than the other stacks' wait, because first boot runs the whole
       # step installer before Apache starts for good. And it waits for the seeded
