@@ -112,3 +112,8 @@ footer p { max-width: 52em; margin: 0 0 10px; }
   html { scroll-behavior: auto; }
   .plate img { transition: none; }
 }
+
+/* Icons beside the words of the navigation links and pills. They take the text's colour. */
+.ico { width: 1.1em; height: 1.1em; vertical-align: -0.2em; margin-right: .4em; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.ico.fill { fill: currentColor; stroke: none; }
+.top nav a { white-space: nowrap; }

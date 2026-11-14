@@ -1,3 +1,7 @@
+---
+icon: fontawesome/brands/docker
+---
+
 # With Docker
 
 You need Docker with Compose 2.23.1 or newer. You do not need to clone the
@@ -30,11 +34,11 @@ use its port. The credentials are the same.
 
 | TYPO3 | Runs on | Port |
 | --- | --- | --- |
-| [3.3.0](3.3.md) | PHP 4.4.9, MySQL 5.5 | 8033 |
-| [3.8.1](3.8.md) | PHP 5.6.40, MySQL 5.5 | 8038 |
-| [4.0.13](4.0.md) | PHP 5.6.40, MySQL 5.5 | 8040 |
-| [4.5.40](4.5.md) | PHP 5.6.40, MySQL 5.5 | 8045 |
-| [6.2.31](6.2.md) | PHP 5.6.40, MySQL 5.5 | 8062 |
+| ![](../assets/marks/mark1-blue-2002.png){ .mark } [3.3.0](3.3.md) | PHP 4.4.9, MySQL 5.5 | 8033 |
+| ![](../assets/marks/mark2-sheets-2003.png){ .mark } [3.8.1](3.8.md) | PHP 5.6.40, MySQL 5.5 | 8038 |
+| ![](../assets/marks/mark3-orange-green-4x.png){ .mark } [4.0.13](4.0.md) | PHP 5.6.40, MySQL 5.5 | 8040 |
+| ![](../assets/marks/mark4-orange-2012.png){ .mark } [4.5.40](4.5.md) | PHP 5.6.40, MySQL 5.5 | 8045 |
+| ![](../assets/marks/mark4-orange-2012.png){ .mark } [6.2.31](6.2.md) | PHP 5.6.40, MySQL 5.5 | 8062 |
 
 ## Further reading
 

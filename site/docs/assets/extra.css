@@ -34,3 +34,11 @@
   --md-footer-fg-color--light: #a2a1a8;
   --md-footer-fg-color--lighter: #a2a1a8;
 }
+
+/* The release marks of the front page, beside each release's name in a table. */
+.md-typeset img.mark {
+  height: 1.4em;
+  width: auto;
+  margin-right: 0.4em;
+  vertical-align: -0.3em;
+}

@@ -1,3 +1,7 @@
+---
+icon: lucide/app-window
+---
+
 # In your browser
 
 TYPO3 runs in your own tab. PHP is compiled to WebAssembly, the database
@@ -6,11 +10,11 @@ install.
 
 | TYPO3 | In your browser |
 | --- | --- |
-| [3.3.0](3.3.md) | [open it](../../3.3/) |
-| [3.8.1](3.8.md) | [open it](../../3.8/) |
-| 4.0.13 | not yet |
-| 4.5.40 | not yet |
-| 6.2.31 | not yet |
+| ![](../assets/marks/mark1-blue-2002.png){ .mark } [3.3.0](3.3.md) | [open it](../../3.3/) |
+| ![](../assets/marks/mark2-sheets-2003.png){ .mark } [3.8.1](3.8.md) | [open it](../../3.8/) |
+| ![](../assets/marks/mark3-orange-green-4x.png){ .mark } 4.0.13 | not yet |
+| ![](../assets/marks/mark4-orange-2012.png){ .mark } 4.5.40 | not yet |
+| ![](../assets/marks/mark4-orange-2012.png){ .mark } 6.2.31 | not yet |
 
 ## What WebAssembly does
 
