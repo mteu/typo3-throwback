@@ -1,7 +1,8 @@
 // MySQL 3.23 behaviour of runtime/mysql-sqlite.js, without PHP: the parts
 // TYPO3 relies on, and the parts the stack probes (probe/stack-<release>.cjs)
 // do not reach, such as the ALTER TABLE the Install Tool's database compare
-// sends.
+// sends. Then what the 5.5 server answers on top, for 4.0/provision.php, and
+// that 3.23 refuses each of those with its own error.
 // Usage: node mysql-sqlite.cjs
 'use strict';
 
@@ -21,8 +22,7 @@ function check(label, test) {
   }
 }
 
-(async () => {
-  const server = new MysqlOnSqlite(await initSqlJs(), { users: { typo3: 'typo3' }, now: () => Date.UTC(2002, 5, 3, 12, 0, 0) });
+function connect(server) {
   const { link } = server.handle(1, 0, 'db', 'typo3', 'typo3');
   const query = sql => server.handle(4, link, sql);
   const rows = sql => {
@@ -35,6 +35,19 @@ function check(label, test) {
     assert.strictEqual(response.kind, 'ok', JSON.stringify(response));
     return response;
   };
+  return { link, query, rows, ok };
+}
+
+// What 4.0/provision.php reads, as it sends it.
+const PROVISION_COLUMN_CHARSET = "SELECT CHARACTER_SET_NAME FROM information_schema.COLUMNS"
+  + " WHERE TABLE_SCHEMA = 'typo3' AND TABLE_NAME = 'pages' AND COLUMN_NAME = 'title'";
+const CHARSET_VARIABLES = ['character_set_server', 'character_set_connection', 'character_set_database'];
+
+(async () => {
+  const SQL = await initSqlJs();
+  const now = () => Date.UTC(2002, 5, 3, 12, 0, 0);
+  const server = new MysqlOnSqlite(SQL, { users: { typo3: 'typo3' }, now });
+  const { link, query, rows, ok } = connect(server);
 
   check('a wrong password is refused with 3.23\'s message', () => {
     const response = server.handle(1, 0, 'db', 'typo3', 'wrong');
@@ -179,6 +192,100 @@ function check(label, test) {
     assert.strictEqual(query('DROP TABLE gone').errno, 1051);
     ok('DROP TABLE IF EXISTS gone');
     assert.deepStrictEqual(rows('SHOW TABLES'), [['pages']]);
+  });
+
+  check('3.23 refuses the character set variables with 1193, as MySQL 4.1 brought them', () => {
+    for (const name of CHARSET_VARIABLES) {
+      const response = query(`SELECT @@${name}`);
+      assert.deepStrictEqual([response.errno, response.message], [1193, `Unknown system variable '${name}'`]);
+    }
+  });
+
+  check('3.23 has no information_schema: 1146', () => {
+    const response = query(PROVISION_COLUMN_CHARSET);
+    assert.deepStrictEqual([response.errno, response.message], [1146, "Table 'information_schema.COLUMNS' doesn't exist"]);
+  });
+
+  check("3.23's HEX() is CONV(N,10,16): a string is read as a number", () => {
+    assert.deepStrictEqual(rows("SELECT HEX(255), HEX('255'), HEX('abc'), HEX(' 12abc'), HEX(-1), HEX(1.5), HEX(NULL)"),
+      [['FF', 'FF', '0', 'C', 'FFFFFFFFFFFFFFFF', '1', null]]);
+  });
+
+  check("3.23's SHOW VARIABLES names its one character set variable", () => {
+    assert.deepStrictEqual(rows("SHOW VARIABLES LIKE 'character_set%'"), [['character_set', 'latin1']]);
+  });
+
+  check('only 3.23.49 and 5.5.62 are imitated', () => {
+    assert.throws(() => new MysqlOnSqlite(SQL, { serverVersion: '4.1.22' }), /MySQL 4\.1\.22 is not imitated/);
+  });
+
+  const server55 = new MysqlOnSqlite(SQL, { serverVersion: '5.5.62', users: { typo3: 'typo3' }, now });
+  const mysql55 = connect(server55);
+
+  check('5.5 tells libmysql its version', () => {
+    assert.strictEqual(server55.handle(1, 0, 'db', 'typo3', 'typo3').serverVersion, '5.5.62');
+  });
+
+  check('5.5 answers the character set variables with latin1, before and after a database is selected', () => {
+    const read = name => {
+      const response = mysql55.query(`SELECT @@${name}`);
+      assert.strictEqual(response.kind, 'result', JSON.stringify(response));
+      assert.strictEqual(response.fields[0].name, `@@${name}`);
+      return response.rows;
+    };
+    for (const name of CHARSET_VARIABLES) {
+      assert.deepStrictEqual(read(name), [['latin1']]);
+    }
+    mysql55.ok('CREATE DATABASE typo3');
+    assert.strictEqual(server55.handle(3, mysql55.link, 'typo3').kind, 'ok');
+    for (const name of CHARSET_VARIABLES) {
+      assert.deepStrictEqual(read(name), [['latin1']]);
+    }
+    assert.deepStrictEqual(mysql55.rows('SELECT @@CHARACTER_SET_SERVER AS charset'), [['latin1']]);
+  });
+
+  mysql55.ok(`CREATE TABLE pages (
+    uid int(11) unsigned DEFAULT '0' NOT NULL auto_increment,
+    title varchar(255) DEFAULT '' NOT NULL,
+    alias varchar(32) binary DEFAULT '' NOT NULL,
+    bodytext text,
+    tstamp int(11) DEFAULT '0' NOT NULL,
+    uc blob NOT NULL,
+    PRIMARY KEY (uid)
+  )`);
+
+  check('5.5 answers information_schema.COLUMNS from the table definitions', () => {
+    assert.deepStrictEqual(mysql55.rows(PROVISION_COLUMN_CHARSET), [['latin1']]);
+    assert.deepStrictEqual(mysql55.rows(`SELECT COLUMN_NAME, ORDINAL_POSITION, COLUMN_DEFAULT, IS_NULLABLE,
+        CHARACTER_SET_NAME, COLLATION_NAME, COLUMN_TYPE
+      FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = 'typo3' AND TABLE_NAME = 'pages' ORDER BY ORDINAL_POSITION`), [
+      ['uid', '1', null, 'NO', null, null, 'int(11) unsigned'],
+      ['title', '2', '', 'NO', 'latin1', 'latin1_swedish_ci', 'varchar(255)'],
+      ['alias', '3', '', 'NO', 'latin1', 'latin1_bin', 'varchar(32) binary'],
+      ['bodytext', '4', null, 'YES', 'latin1', 'latin1_swedish_ci', 'text'],
+      ['tstamp', '5', '0', 'NO', null, null, 'int(11)'],
+      ['uc', '6', null, 'NO', null, null, 'blob'],
+    ]);
+  });
+
+  check('5.5 reads information_schema without a database selected, and only COLUMNS', () => {
+    const fresh = connect(server55);
+    assert.deepStrictEqual(fresh.rows(PROVISION_COLUMN_CHARSET), [['latin1']]);
+    assert.strictEqual(fresh.query('SELECT * FROM information_schema.TABLES').errno, 1105);
+  });
+
+  check("5.5's HEX(): a string's bytes, so latin1 comes back byte for byte", () => {
+    const title = 'Gr\u00fc\u00dfe \u00e0 \u00a9';
+    const { insertId } = mysql55.ok(`INSERT INTO pages (title) VALUES ('${title}')`);
+    assert.deepStrictEqual(mysql55.rows(`SELECT HEX(title) FROM pages WHERE uid = ${insertId}`),
+      [[Buffer.from(title, 'latin1').toString('hex').toUpperCase()]]);
+    assert.deepStrictEqual(mysql55.rows("SELECT HEX(255), HEX('255'), HEX(-1), HEX(1.5), HEX(NULL)"),
+      [['FF', '323535', 'FFFFFFFFFFFFFFFF', '2', null]]);
+  });
+
+  check("5.5's SHOW VARIABLES lists the character set variables", () => {
+    assert.deepStrictEqual(mysql55.rows("SHOW VARIABLES LIKE 'character_set%'"),
+      CHARSET_VARIABLES.map(name => [name, 'latin1']));
   });
 
   console.log(failures === 0 ? 'mysql on sqlite: all checks passed' : `mysql on sqlite: ${failures} failed`);
