@@ -120,7 +120,7 @@ async function relay(request, url) {
   headers['User-Agent'] = self.navigator.userAgent;
   headers.Referer = request.referrer;
 
-  const message = { method: request.method, path: url.pathname, query: url.search.slice(1), headers, body };
+  const message = { method: request.method, path: url.pathname, query: url.search.slice(1), headers, body, https: url.protocol === 'https:' };
   const deadline = Date.now() + LEADER_WAIT_MS;
   let response = null;
   for (;;) {

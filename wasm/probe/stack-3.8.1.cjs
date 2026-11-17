@@ -9,6 +9,7 @@
 //   every clock PHP and the server read starts at noon on the release day,
 //   in UTC, whatever the host's time zone
 //   the login works as 3.8.1's own form computes it, and opens the frameset
+//   over HTTPS, the login redirects to https://, not http://
 //   the record editor shows labels from locallang XML, and saves a new page
 //   title, which the frontend then shows
 //   the admin uploads a file into fileadmin/, and TYPO3 refuses a .php one
@@ -135,6 +136,34 @@ const urlEncoded = fields => fields.map(([name, value]) => `${encodeURIComponent
     assert.strictEqual(response.status, 302);
     assert.strictEqual(response.header('Location'), 'http://localhost/typo3/alt_main.php');
     assert.ok(admin.cookie('be_typo_user'), 'no backend session cookie');
+  });
+
+  // The public site is HTTPS. The redirect is absolute, so an http:// one
+  // would leave the service worker's scope. Asked as sw.js asks, through the
+  // site's own cookie jar.
+  check('over HTTPS, the login redirects to https://', () => {
+    const request = (method, body = null) => site.handle({
+      method,
+      path: '/typo3/index.php',
+      headers: {
+        Host: 'localhost',
+        'User-Agent': USER_AGENT,
+        ...(body ? { 'Content-Type': 'application/x-www-form-urlencoded', Referer: 'https://localhost/typo3/index.php' } : {}),
+      },
+      body: body && Buffer.from(body, 'latin1'),
+      https: true,
+    });
+    const form = Buffer.from(request('GET').body).toString('latin1');
+    const challenge = (form.match(/name="challenge" value="([0-9a-f]{32})"/) || [])[1];
+    assert.ok(challenge, 'the login form carried no challenge');
+    const response = request('POST', urlEncoded([
+      ['login_status', 'login'], ['username', 'admin'], ['p_field', ''],
+      ['userident', md5(`admin:${md5('password')}:${challenge}`)], ['challenge', challenge], ['interface', 'backend'],
+    ]));
+    const location = (response.headers.find(([name]) => name.toLowerCase() === 'location') || [])[1];
+    console.log(`     ${response.status} to ${location}`);
+    assert.strictEqual(response.status, 302);
+    assert.strictEqual(location, 'https://localhost/typo3/alt_main.php');
   });
 
   check('alt_main.php answers with the frameset', () => {
