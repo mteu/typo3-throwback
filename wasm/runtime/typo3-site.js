@@ -240,9 +240,10 @@
       FS.writeFile(`${root}/typo3conf/localconf.php`, encoder.encode(['<?php', ...this.release.localconf, '?>', ''].join('\n')));
     }
 
-    // request: { method, path, query, headers: { name: value }, body: Uint8Array | null }
-    // path is the URL path, query the part after "?" without it.
-    handle({ method = 'GET', path, query = '', headers = {}, body = null }) {
+    // request: { method, path, query, headers: { name: value }, body: Uint8Array | null, https }
+    // path is the URL path, query the part after "?" without it. https is
+    // true when the page asked over HTTPS.
+    handle({ method = 'GET', path, query = '', headers = {}, body = null, https = false }) {
       if (path === this.urlPrefix) {
         // The site root is a directory: without its slash, relative URLs such
         // as clear.gif would resolve one level up.
@@ -276,7 +277,7 @@
         for (const index of ['index.php', 'index.html']) {
           const candidate = this.stat(`${file}${index}`);
           if (candidate && !FS.isDir(candidate.mode)) {
-            return this.serve(`${relative}${index}`, { method, query, headers, body });
+            return this.serve(`${relative}${index}`, { method, query, headers, body, https });
           }
         }
         return plainResponse(403, 'Forbidden');
@@ -284,7 +285,7 @@
       if (!stat) {
         return plainResponse(404, 'Not Found');
       }
-      return this.serve(relative, { method, query, headers, body });
+      return this.serve(relative, { method, query, headers, body, https });
     }
 
     stat(path) {
@@ -295,7 +296,7 @@
       }
     }
 
-    serve(relative, { method, query, headers, body }) {
+    serve(relative, { method, query, headers, body, https }) {
       const file = `${this.docroot}${relative}`;
       if (!relative.endsWith('.php')) {
         const extension = (relative.match(/\.([a-z0-9]+)$/i) || [])[1];
@@ -314,7 +315,10 @@
         queryString: query,
         headers: { ...headers, ...(cookie ? { Cookie: cookie } : {}) },
         body,
-        server: { DOCUMENT_ROOT: WEB_ROOT },
+        // 3.8.1 and later build absolute redirects, with the scheme from
+        // $_SERVER['HTTPS'] (t3lib_div::getIndpEnv('TYPO3_SSL')). Without it,
+        // a login on an HTTPS site redirects to http://.
+        server: { DOCUMENT_ROOT: WEB_ROOT, ...(https ? { HTTPS: 'on', SERVER_PORT: '443' } : {}) },
       });
       const out = [];
       for (const [name, value] of response.headers) {

@@ -6,6 +6,7 @@
 
 const fs = require('fs');
 const http = require('http');
+const https = require('https');
 const path = require('path');
 
 const SITE_PATH = '/typo3-throwback';
@@ -15,9 +16,9 @@ const TYPES = {
 };
 
 // Resolves to the URL the site root is served at, and a function that stops
-// the server.
-function serveSite(root) {
-  const server = http.createServer((req, res) => {
+// the server. With tls ({ key, cert }, PEM), it serves HTTPS, as Pages does.
+function serveSite(root, { tls = null } = {}) {
+  const handler = (req, res) => {
     const url = new URL(req.url, 'http://localhost');
     const inSite = url.pathname.startsWith(`${SITE_PATH}/`);
     const file = path.join(root, path.normalize(decodeURIComponent(url.pathname.slice(SITE_PATH.length))).replace(/^(\.\.[/\\])+/, ''));
@@ -28,10 +29,11 @@ function serveSite(root) {
     }
     res.writeHead(200, { 'Content-Type': TYPES[path.extname(file)] || 'application/octet-stream' });
     fs.createReadStream(file).pipe(res);
-  });
+  };
+  const server = tls ? https.createServer(tls, handler) : http.createServer(handler);
   return new Promise(resolve => {
     server.listen(0, '127.0.0.1', () => resolve({
-      url: `http://127.0.0.1:${server.address().port}${SITE_PATH}`,
+      url: `${tls ? 'https' : 'http'}://127.0.0.1:${server.address().port}${SITE_PATH}`,
       close: () => server.close(),
     }));
   });

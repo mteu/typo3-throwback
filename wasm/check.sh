@@ -4,7 +4,8 @@
 # work dir its build.sh wrote to. Needs node and npm: sql.js and Playwright
 # come from package-lock.json. The browser steps also need Playwright's
 # Chromium (npx playwright install chromium), and are skipped with
-# SKIP_BROWSER=1. .github/workflows/pages.yml runs this before every deploy.
+# SKIP_BROWSER=1. The HTTPS probe needs openssl for a throwaway certificate.
+# .github/workflows/pages.yml runs this before every deploy.
 #
 # Three parts: what each interpreter must do, what every release must do
 # (one loop over releases/), and what a release's own stack must do.
@@ -139,6 +140,9 @@ if [ "${SKIP_BROWSER:-0}" != 1 ]; then
 
     echo "== two releases on one origin: each its own PHP, snapshot and reset"
     node "$here/probe/two-sites.cjs" "$work/site"
+
+    echo "== every release's backend login over HTTPS, as the public site serves it"
+    node "$here/probe/https.cjs" "$work/site" "${releases[@]}"
 fi
 
 echo "== all checks passed"
