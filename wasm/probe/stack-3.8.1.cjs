@@ -307,6 +307,24 @@ const urlEncoded = fields => fields.map(([name, value]) => `${encodeURIComponent
     }
   });
 
+  // Not in the Docker job: the Install Tool's test mail, with mail() and with
+  // t3lib_htmlmail (class.tx_install.php:1599-1613). Docker's sendmail_path is
+  // /bin/true, so the mail is "sent" and goes nowhere; here too, through
+  // native/popen.c. Before that, PHP had no mail(), and this was a fatal error.
+  check('the Install Tool sends its test mail, with mail() and with t3lib_htmlmail, as Docker does to /bin/true', () => {
+    for (const htmlmail of [false, true]) {
+      const response = installTool('typo3/install/index.php', {
+        query: 'TYPO3_INSTALL[type]=general',
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: urlEncoded([['TYPO3_INSTALL[check_mail]', 'admin@example.com'], ...(htmlmail ? [['TYPO3_INSTALL[use_htmlmail]', 'on']] : [])]),
+      });
+      assert.strictEqual(response.status, 200, `htmlmail: ${htmlmail}`);
+      assertNoPhpErrors(response);
+      assert.match(visibleText(response), /MAIL WAS SENT TO: admin@example\.com/, `htmlmail: ${htmlmail}`);
+    }
+  });
+
   // ci-backend-session.sh's assert_fresh_sessions_are_distinct, last as in
   // the job. 3.8.1 makes a session id from the clock and the process id, so
   // under a clock that stands still every request would get the same one

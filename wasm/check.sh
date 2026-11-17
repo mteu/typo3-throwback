@@ -35,6 +35,10 @@ grep -q 'Fatal error: Call to undefined function: undefined_function_call()' <<<
 grep -q 'shutdown function ran after fatal' <<<"$fatal"
 ! grep -q never <<<"$fatal"
 
+echo "== mail() through /bin/true, as every Docker stack's sendmail_path"
+"${php[@]}" "$here/probe/mail.php"
+"${php[@]}" -d sendmail_path=/usr/sbin/sendmail "$here/probe/mail.php" refused
+
 echo "== request loop: many requests in one instance"
 node "$here/probe/request-loop.cjs" "$php4/sapi-node" "$work/request-loop"
 

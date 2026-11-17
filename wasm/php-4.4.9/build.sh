@@ -64,6 +64,12 @@ done
 # The extensions php4-base/Dockerfile builds, with the same GD options, and
 # ext/xml, which it does not: 3.8.1 parses its locallang XML files with it.
 # PCRE, sessions, GD 2.0.28 and expat 1.95.6 are bundled C.
+#
+# PHP compiles mail() in only if configure finds a sendmail. The one mail
+# program here is /bin/true, which every Docker stack's sendmail_path names
+# and which native/popen.c runs. It is also PHP's default sendmail_path then,
+# "/bin/true -t -i", for scripts run with -n.
+ac_cv_path_PROG_SENDMAIL=/bin/true \
 emconfigure ./configure \
     --disable-all \
     --disable-cgi \
@@ -82,6 +88,8 @@ grep -q '^#define SIZEOF_LONG 4$' main/php_config.h
 grep -q '^#define HAVE_MYSQL 1$' main/php_config.h
 grep -q '^#define HAVE_BUNDLED_PCRE 1$' main/php_config.h
 grep -q '^#define HAVE_ZLIB 1$' main/php_config.h
+grep -q '^#define HAVE_SENDMAIL 1$' main/php_config.h
+grep -q '^#define PHP_PROG_SENDMAIL[[:space:]]*"/bin/true"$' main/build-defs.h
 # The expat in PHP's archive, not one configure found elsewhere.
 for define in HAVE_LIBEXPAT HAVE_LIBEXPAT_BUNDLED; do
     grep -q "^#define $define 1$" main/php_config.h
@@ -95,10 +103,12 @@ done
 emmake make -j"$(nproc)" > "$work/make.out" 2>&1
 
 emcc -O1 -c "$native/clock.c" -o "$work/wasm_clock.o"
+emcc -O1 -c "$native/popen.c" -o "$work/wasm_popen.o"
 emcc $CFLAGS -I. -Imain -IZend -ITSRM -Iinclude \
     -c "$here/sapi.c" -o "$work/php_wasm_sapi.o"
 
-# Relink the way make did, adding the clock override and the output flags.
+# Relink the way make did, adding the clock and popen overrides and the
+# output flags.
 #
 # The stack is 8 MB, as a Linux process gets, not Emscripten's 64 KB default.
 # PHP 4's executor recurses once per user function call and keeps each
@@ -110,7 +120,7 @@ emcc $CFLAGS -I. -Imain -IZend -ITSRM -Iinclude \
 stack_flags="-sSTACK_SIZE=8MB -sSTACK_OVERFLOW_CHECK=2"
 link=$(grep -m1 -- '-o sapi/cli/php$' "$work/make.out")
 relink() {
-    eval "${1/%-lm  -o sapi\/cli\/php/$work/wasm_clock.o -lm $stack_flags $2}"
+    eval "${1/%-lm  -o sapi\/cli\/php/$work/wasm_clock.o $work/wasm_popen.o -lm $stack_flags $2}"
 }
 
 # The CLI: one script per instance. check.sh lints and probes with it.
