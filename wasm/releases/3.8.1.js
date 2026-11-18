@@ -4,7 +4,7 @@
 //
 // The Docker stack runs PHP 5.6.40. 3.8.1 stops only below PHP 4.1.0
 // (typo3/init.php:198); wasm/check.sh shows that every file parses on PHP
-// 4.4.9 and that the bootstrap runs (#52).
+// 4.4.9 and that the bootstrap runs.
 //
 'use strict';
 

@@ -87,18 +87,18 @@
         <li class="room">
           <h3><img src="marks/mark3-orange-green-4x.png" alt=""> TYPO3 4.0.13 <small>2009-07-02</small></h3>
           <figure class="shown">
-          <div class="bw ie7" role="img" aria-label="Internet Explorer 7 on Windows XP, capture pending">
+          <div class="bw ie7" role="img" aria-label="Internet Explorer 7 on Windows XP, showing the TYPO3 4.0.13 backend right after login: the module menu on the left, the About modules page and a yellow security warning about the default passwords">
             <div class="tb"><span class="clip">TYPO3 4.0.13 Backend - Windows Internet Explorer</span><span class="cap"><i>_</i><i>&#9633;</i><i>x</i></span></div>
             <div class="body">
-              <div class="nav"><span class="orb"></span><span class="orb"></span><span class="field clip">http://127.0.0.1/typo3/</span><span class="search clip hide-sm">Live Search</span></div>
+              <div class="nav"><span class="orb"></span><span class="orb"></span><span class="field clip">http://127.0.0.1:8040/typo3/</span><span class="search clip hide-sm">Live Search</span></div>
               <div class="tabs"><span class="star">&#9733;</span><span class="tab clip">TYPO3 4.0.13 Backend</span></div>
-              <div class="pane"><div><b>Capture pending</b>TYPO3 4.0.13 backend</div></div>
+              <div class="pane capture"><img src="captures/4.0.13-backend.png" alt="" width="1024" height="640" loading="lazy"></div>
               <div class="st"><span>Done</span><span>Internet</span><span class="hide-sm">100%</span></div>
             </div>
           </div>
           </figure>
-          <dl class="facts"><dt>Runs on</dt><dd>PHP 5.6.40, MySQL 5.5</dd><dt>Known for</dt><dd>The only 4.0 release the feed lists</dd></dl>
-          <p><a class="pill go" href="docs/docker/4.0/"><svg class="ico fill" viewBox="0 0 640 512" aria-hidden="true"><path d="M349.9 236.3h-66.1v-59.4h66.1zm0-204.3h-66.1v60.7h66.1zm78.2 144.8H362v59.4h66.1zm-156.3-72.1h-66.1v60.1h66.1zm78.1 0h-66.1v60.1h66.1zm276.8 100c-14.4-9.7-47.6-13.2-73.1-8.4-3.3-24-16.7-44.9-41.1-63.7l-14-9.3-9.3 14c-18.4 27.8-23.4 73.6-3.7 103.8-8.7 4.7-25.8 11.1-48.4 10.7H2.4c-8.7 50.8 5.8 116.8 44 162.1 37.1 43.9 92.7 66.2 165.4 66.2 157.4 0 273.9-72.5 328.4-204.2 21.4.4 67.6.1 91.3-45.2 1.5-2.5 6.6-13.2 8.5-17.1zm-511.1-27.9h-66v59.4h66.1v-59.4zm78.1 0h-66.1v59.4h66.1zm78.1 0h-66.1v59.4h66.1zm-78.1-72.1h-66.1v60.1h66.1z"/></svg>With Docker</a></p>
+          <dl class="facts"><dt>Runs on</dt><dd>PHP 5.6.40 (PHP4 in Browser), MySQL 5.5</dd><dt>Known for</dt><dd>The only 4.0 release the feed lists</dd></dl>
+          <p><a class="pill go" href="4.0/"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><rect width="20" height="16" x="2" y="4" rx="2"/><path d="M10 4v4M2 8h20M6 4v4"/></svg>In your browser</a> <a class="pill go" href="docs/docker/4.0/"><svg class="ico fill" viewBox="0 0 640 512" aria-hidden="true"><path d="M349.9 236.3h-66.1v-59.4h66.1zm0-204.3h-66.1v60.7h66.1zm78.2 144.8H362v59.4h66.1zm-156.3-72.1h-66.1v60.1h66.1zm78.1 0h-66.1v60.1h66.1zm276.8 100c-14.4-9.7-47.6-13.2-73.1-8.4-3.3-24-16.7-44.9-41.1-63.7l-14-9.3-9.3 14c-18.4 27.8-23.4 73.6-3.7 103.8-8.7 4.7-25.8 11.1-48.4 10.7H2.4c-8.7 50.8 5.8 116.8 44 162.1 37.1 43.9 92.7 66.2 165.4 66.2 157.4 0 273.9-72.5 328.4-204.2 21.4.4 67.6.1 91.3-45.2 1.5-2.5 6.6-13.2 8.5-17.1zm-511.1-27.9h-66v59.4h66.1v-59.4zm78.1 0h-66.1v59.4h66.1zm78.1 0h-66.1v59.4h66.1zm-78.1-72.1h-66.1v60.1h66.1z"/></svg>With Docker</a></p>
         </li>
         <li class="room">
           <h3><img src="marks/mark4-orange-2012.png" alt=""> TYPO3 4.5.40 <small>2015-02-19</small></h3>
@@ -131,11 +131,12 @@
       <div class="doors">
         <div>
           <h2>Try it in your browser</h2>
-          <p class="sub" style="margin-bottom:0">TYPO3 3.3.0 and 3.8.1 run in your own tab, on PHP 4.4.9 compiled to WebAssembly. There is nothing to install, and nothing runs on a server. Your site is kept in your browser until you reset it. The later releases follow. <a href="docs/browser/">How it works.</a></p>
+          <p class="sub" style="margin-bottom:0">TYPO3 3.3.0, 3.8.1 and 4.0.13 run in your own tab, on PHP 4.4.9 compiled to WebAssembly. There is nothing to install, and nothing runs on a server. Your site is kept in your browser until you reset it. The later releases follow. <a href="docs/browser/">How it works.</a></p>
         </div>
         <div class="btns">
           <a class="btn solid" href="3.3/">Open TYPO3 3.3.0</a>
           <a class="btn solid" href="3.8/">Open TYPO3 3.8.1</a>
+          <a class="btn solid" href="4.0/">Open TYPO3 4.0.13</a>
         </div>
       </div>
     </section>

@@ -111,10 +111,9 @@ assert_admin_can_upload() {
 #
 # 3.8.1 makes its ids the same way (t3lib/class.t3lib_userauth.php:231), and 3.3.0
 # from the clock alone, md5(uniqid("")) (t3lib/class.t3lib_userauth.php:138). So
-# under a frozen clock 3.8 collides per child and 3.3 on every request. Both did
-# in CI (issues #12 and #13), and both now let the clock run from the release
-# instant instead, which makes uniqid() move again. 4.0 keeps its clock still and
-# its one process per connection.
+# under a frozen clock 3.8 collides per child and 3.3 on every request. So both
+# let the clock run from the release instant instead, which keeps uniqid()
+# moving. 4.0 keeps its clock still and its one process per connection.
 assert_fresh_sessions_are_distinct() {
     logged_in=$(awk '$6 == "be_typo_user" { print $7 }' jar)
     : > fresh-sessions.txt

@@ -24,10 +24,10 @@ FROM ${BASE_REGISTRY}/php@sha256:0a40fd273961b99d8afe69a61a68c73c04bc0caa9de384d
 # This image is built on Debian stretch (verified from the pinned manifest's own
 # config blob, not assumed). Stretch lives on archive.debian.org now, and its
 # signing keys have expired. apt reports that as EXPKEYSIG and refuses, with no
-# way to accept an expired signature. Until #11, this step answered with
-# [trusted=yes], so the Packages index arrived unauthenticated.
+# way to accept an expired signature. The usual way around that, [trusted=yes],
+# lets the Packages index arrive unauthenticated.
 #
-# Now apt resolves nothing at build time. Every file installed here is named,
+# Here apt resolves nothing at build time. Every file installed here is named,
 # with its SHA-256, in 3.8/stretch-debs.lock. Those hashes were checked against
 # stretch's own signed chain: the Release signature (an expired key still makes
 # a valid signature), Packages.gz against Release, and each .deb against

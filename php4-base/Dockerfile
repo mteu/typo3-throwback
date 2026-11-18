@@ -81,8 +81,8 @@ FROM ${BASE_REGISTRY}/debian@sha256:99cdf7792e25416bd801861ccd8e2fb27fb527b25e8d
 # Both hosts serve Release files signed by keys the base image already trusts, so
 # signature verification stays on and only the freshness check is relaxed — an
 # archived or snapshotted Release has a Valid-Until in the past by definition.
-# This is deliberately not `trusted=yes`, which 3.8 still needs: an expired
-# Release is a stale index, an unverified one is no index at all.
+# This is deliberately not `trusted=yes`: an expired Release is a stale index,
+# an unverified one is no index at all.
 ARG DEBIAN_SNAPSHOT
 RUN set -eux; \
     { \

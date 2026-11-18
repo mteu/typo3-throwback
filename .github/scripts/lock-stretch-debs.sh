@@ -12,9 +12,8 @@
 # The packages to resolve are named once, in the lock's own "# packages:" line.
 #
 # Why this exists: stretch's signing keys have expired, and apt has no way to
-# accept an expired signature. It reports EXPKEYSIG and refuses, so the
-# Dockerfiles used to install with [trusted=yes], over an index nobody had
-# authenticated. An expired key still makes a valid signature, though. It only
+# accept an expired signature. It reports EXPKEYSIG and refuses. The usual way
+# around that, [trusted=yes], installs over an index nobody has authenticated. An expired key still makes a valid signature, though. It only
 # says the key should no longer be used for new ones, and these were made while
 # it was current. So the chain is checked here, once, by hand:
 #
