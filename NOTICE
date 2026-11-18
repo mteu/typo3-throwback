@@ -65,8 +65,10 @@ Packages the builds install
 The site published to GitHub Pages
 
   .github/workflows/pages.yml publishes PHP 4.4.9 compiled to WebAssembly,
-  sql.js and the TYPO3 3.3.0 and 3.8.1 archives. Each archive bundles a
-  phpMyAdmin, under the GPL. The site carries LICENSES.txt with the notices
+  sql.js and the TYPO3 3.3.0, 3.8.1 and 4.0.13 archives. The 3.3.0 and 3.8.1
+  archives each bundle a phpMyAdmin, under the GPL. The 4.0.13 archive
+  bundles ADOdb, under the BSD licence or the LGPL 2.1, and htmlArea, under a
+  BSD-style licence. The site carries LICENSES.txt with the notices
   the PHP License and the Zend Engine License require, the credit lines the
   libjpeg and FreeType licences require, the licence files in each TYPO3
   archive, and the full texts of every licence above that applies to it.

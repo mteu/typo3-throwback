@@ -140,7 +140,11 @@
       const restorable = database && snapshot && snapshot.version === release.snapshotVersion;
       const clock = clockStartMs === null ? null : PhpRuntime.clockStartingAt(clockStartMs);
       if (database) {
-        this.mysql = new MysqlOnSqlite(SQL, { users: { typo3: 'typo3' }, ...(clock ? { now: clock } : {}) });
+        this.mysql = new MysqlOnSqlite(SQL, {
+          users: { typo3: 'typo3' },
+          ...(release.mysqlServerVersion ? { serverVersion: release.mysqlServerVersion } : {}),
+          ...(clock ? { now: clock } : {}),
+        });
         if (restorable) {
           this.mysql.addDatabase('typo3', snapshot.database);
         }

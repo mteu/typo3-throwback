@@ -1,6 +1,20 @@
-// A MySQL 3.23 server for libmysql/libmysql.c, kept in SQLite (sql.js).
+// A MySQL server for libmysql/libmysql.c, kept in SQLite (sql.js).
 //
-// It answers what TYPO3 3.x and its install tooling send, not every MySQL
+// It imitates one of two server versions, which each release file names:
+//
+//   3.23.49  the default, what TYPO3 3.3.0 and 3.8.1 talk to. It has no
+//            character_set_* variables and no information_schema: both came
+//            later, and each is refused with the error 3.23 sends. HEX() is
+//            CONV(N,10,16), so it reads a string as a number.
+//   5.5.62   what the 4.0.13 Docker stack runs. On top of 3.23's statements,
+//            it answers the subset 4.0/provision.php reads:
+//            @@character_set_server, @@character_set_connection and
+//            @@character_set_database, all latin1;
+//            information_schema.COLUMNS, built from each table's MySQL
+//            definition; and HEX() of a string's bytes, as since MySQL 4.0.1.
+//            Everything else answers as it does for 3.23.
+//
+// It answers what TYPO3 and its install tooling send, not every MySQL
 // statement. SQL is tokenized with MySQL's rules (backslash escapes, both
 // quote styles, backticks, "#" comments) and re-emitted for SQLite. Each
 // table's MySQL definition is kept beside it, in __phpwasm_mysql_tables, so
@@ -15,8 +29,8 @@
 // MySQL's number. A statement it cannot translate fails in SQLite instead,
 // as error 1105 with SQLite's message. The stack probes,
 // probe/stack-<release>.cjs, record every statement answered with an error
-// and fail on any. For TYPO3 3.3.0 and 3.8.1 there are none, over what those
-// probes reach: provisioning, the frontend, the backend login, record
+// and fail on any. For TYPO3 3.3.0, 3.8.1 and 4.0.13 there are none, over
+// what those probes reach: provisioning, the frontend, the backend login, record
 // editing, uploads and the Install Tool. Beyond that, probe/mysql-sqlite.cjs
 // covers the ALTER TABLE forms the Install Tool's database compare sends.
 // Other statements are untested.
@@ -39,13 +53,14 @@
     UNSIGNED: 32, ZEROFILL: 64, BINARY: 128, ENUM: 256, AUTO_INCREMENT: 512,
     TIMESTAMP: 1024, SET: 2048, NUM: 32768,
   };
-  // Server error numbers and message formats as MySQL 3.23 sends them.
+  // Server error numbers and message formats as MySQL 3.23 sends them. 1193 is
+  // in 3.23.49's list too (PHP 4.4.9's ext/mysql/libmysql/mysqld_error.h).
   const ER = {
     DB_CREATE_EXISTS: 1007, DB_DROP_EXISTS: 1008, ACCESS_DENIED: 1045,
     NO_DB: 1046, BAD_DB: 1049, TABLE_EXISTS: 1050, BAD_TABLE: 1051,
     BAD_FIELD: 1054, DUP_ENTRY: 1062, PARSE: 1064, EMPTY_QUERY: 1065,
     KEY_DOES_NOT_EXIST: 1091, UNKNOWN: 1105, NO_SUCH_TABLE: 1146,
-    NOT_SUPPORTED: 1235,
+    UNKNOWN_SYSTEM_VARIABLE: 1193, NOT_SUPPORTED: 1235,
   };
   const CATALOG = '__phpwasm_mysql_tables';
   const REBUILD = '__phpwasm_rebuild';
@@ -776,6 +791,74 @@
   }
 
   // ---------------------------------------------------------------------
+  // What depends on the server version
+
+  function majorVersion(serverVersion) {
+    return Number(String(serverVersion).split('.')[0]);
+  }
+
+  // [name, value] as SHOW VARIABLES lists them and SELECT @@name reads them.
+  // Only the variables something here reads: SHOW VARIABLES is not a full
+  // list for either version.
+  function serverVariables(serverVersion) {
+    if (majorVersion(serverVersion) < 5) {
+      return [['version', serverVersion], ['character_set', 'latin1'], ['sql_mode', '0']];
+    }
+    // The 4.0 Docker stack's server runs latin1 (4.0/compose.yaml), with an
+    // empty sql_mode, mysql:5.5's own default.
+    return [
+      ['version', serverVersion],
+      ['character_set_server', 'latin1'],
+      ['character_set_connection', 'latin1'],
+      ['character_set_database', 'latin1'],
+      ['sql_mode', ''],
+    ];
+  }
+
+  const SERVER_VERSIONS = ['3.23.49', '5.5.62'];
+
+  // Character set variables came with MySQL 4.1. 3.23 refuses them by name.
+  const CHARACTER_SET_VARIABLES = /^character_set_/i;
+
+  const UINT64 = 2n ** 64n;
+
+  function hexOfInteger(value) {
+    return BigInt.asUintN(64, value).toString(16).toUpperCase();
+  }
+
+  // MySQL 3.23's HEX(N) is CONV(N,10,16): the argument's text through
+  // strtoull(), which skips leading space, stops at the first non-digit,
+  // negates a leading minus modulo 2^64 and saturates on overflow.
+  function hexAsMysql323(text) {
+    const match = /^\s*([+-]?)(\d*)/.exec(text);
+    let number = match[2] ? BigInt(match[2]) : 0n;
+    if (number >= UINT64) {
+      return 'FFFFFFFFFFFFFFFF';
+    }
+    if (match[1] === '-') {
+      number = -number;
+    }
+    return hexOfInteger(number);
+  }
+
+  // From MySQL 4.0.1: a string's bytes, two digits each; a number as an
+  // integer, a fraction rounded half away from zero.
+  function hexAsMysql5(value, text) {
+    if (typeof value === 'number') {
+      if (Number.isInteger(value)) {
+        return hexOfInteger(BigInt(value));
+      }
+      const rounded = value < 0 ? Math.ceil(value - 0.5) : Math.floor(value + 0.5);
+      return Number.isFinite(rounded) && Math.abs(rounded) < 2 ** 63 ? hexOfInteger(BigInt(rounded)) : 'FFFFFFFFFFFFFFFF';
+    }
+    let hex = '';
+    for (let i = 0; i < text.length; i++) {
+      hex += text.charCodeAt(i).toString(16).toUpperCase().padStart(2, '0');
+    }
+    return hex;
+  }
+
+  // ---------------------------------------------------------------------
   // MySQL functions SQLite lacks
 
   function twoDigits(n) {
@@ -813,9 +896,11 @@
     return func;
   }
 
-  function registerFunctions(db, now) {
+  function registerFunctions(db, now, serverVersion) {
     const anyNull = args => args.some(arg => arg === null);
     const text = value => (value instanceof Uint8Array ? latin1FromBytes(value) : String(value));
+    const hex = majorVersion(serverVersion) < 5 ? (value => hexAsMysql323(text(value))) : (value => hexAsMysql5(value, text(value)));
+    db.create_function('HEX', value => (value === null ? null : hex(value)));
     db.create_function('MYSQL_CONCAT', variadic(function () {
       const args = Array.from(arguments);
       return anyNull(args) ? null : args.map(text).join('');
@@ -891,7 +976,11 @@
     // SQL: an initialized sql.js module. Options:
     //   users: { name: password } to check logins; omitted, any login works
     //   now: () => milliseconds, the clock behind NOW() and UNIX_TIMESTAMP()
+    //   serverVersion: '3.23.49' or '5.5.62', see the top of this file
     constructor(SQL, { serverVersion = '3.23.49', users = null, now = () => Date.now() } = {}) {
+      if (!SERVER_VERSIONS.includes(serverVersion)) {
+        throw new Error(`MySQL ${serverVersion} is not imitated, only ${SERVER_VERSIONS.join(' and ')}`);
+      }
       this.SQL = SQL;
       this.serverVersion = serverVersion;
       this.users = users;
@@ -909,7 +998,7 @@
       }
       const db = bytes ? new this.SQL.Database(bytes) : new this.SQL.Database();
       db.exec(`CREATE TABLE IF NOT EXISTS ${quoteIdent(CATALOG)} (name TEXT PRIMARY KEY, definition TEXT NOT NULL)`);
-      registerFunctions(db, this.now);
+      registerFunctions(db, this.now, this.serverVersion);
       this.databases.set(name, { db, definitions: new Map() });
     }
 
@@ -1145,7 +1234,9 @@
     // --- SELECT ---------------------------------------------------------
 
     select(link, stream) {
-      const entry = link.database ? this.databases.get(link.database) : null;
+      this.resolveSystemVariables(stream.tokens);
+      const informationSchemaWith = this.resolveInformationSchema(stream.tokens);
+      const entry = link.database && !informationSchemaWith ? this.databases.get(link.database) : null;
       const tokens = stream.tokens;
       stream.next();
       while (stream.acceptWord('DISTINCTROW', 'HIGH_PRIORITY', 'STRAIGHT_JOIN', 'SQL_SMALL_RESULT',
@@ -1160,7 +1251,7 @@
 
       if (rest.length >= 2 && rest[0].upper === 'FROM' && rest[1].upper === 'DUAL') {
         rest = rest.slice(2);
-      } else if (!entry && rest.length && rest[0].upper === 'FROM') {
+      } else if (!entry && !informationSchemaWith && rest.length && rest[0].upper === 'FROM') {
         // Only a SELECT without tables runs before a database is selected.
         throw new MysqlError(ER.NO_DB, 'No Database Selected');
       }
@@ -1185,7 +1276,7 @@
         const original = stream.sql.slice(item[0].start, last.end);
         return `${emit(item)} AS ${quoteIdent(original)}`;
       });
-      const sqliteSql = `SELECT ${distinct ? 'DISTINCT ' : ''}${emittedItems.join(', ')} ${emit(rest)}`.trim();
+      const sqliteSql = `${informationSchemaWith || ''}SELECT ${distinct ? 'DISTINCT ' : ''}${emittedItems.join(', ')} ${emit(rest)}`.trim();
       if (listStart === stream.tokens.length) {
         throw stream.error();
       }
@@ -1206,10 +1297,85 @@
       return this.result(fields, rows);
     }
 
+    // Replaces each @@name in a SELECT with the variable's value, as a string
+    // token spanning the original text, so the column is still named
+    // "@@name". A name neither refused nor known here is left to SQLite.
+    resolveSystemVariables(tokens) {
+      const known = new Map(serverVariables(this.serverVersion).map(([name, value]) => [name.toLowerCase(), value]));
+      for (let i = 0; i + 2 < tokens.length; i++) {
+        const [at, at2, name] = [tokens[i], tokens[i + 1], tokens[i + 2]];
+        if (!(at.type === 'op' && at.value === '@' && at2.type === 'op' && at2.value === '@'
+            && at.end === at2.start && at2.end === name.start && isNameToken(name))) {
+          continue;
+        }
+        if (majorVersion(this.serverVersion) < 5 && CHARACTER_SET_VARIABLES.test(name.value)) {
+          throw new MysqlError(ER.UNKNOWN_SYSTEM_VARIABLE, `Unknown system variable '${name.value}'`);
+        }
+        if (majorVersion(this.serverVersion) >= 5 && known.has(name.value.toLowerCase())) {
+          tokens.splice(i, 3, { type: 'string', value: known.get(name.value.toLowerCase()), start: at.start, end: name.end });
+        }
+      }
+    }
+
+    // Replaces information_schema.COLUMNS in a SELECT with a table of the same
+    // name, built in a WITH clause, which it returns. The statement then runs
+    // in the scratch database, as information_schema's tables belong to no
+    // database. Returns null for a SELECT that does not read
+    // information_schema.
+    resolveInformationSchema(tokens) {
+      let withClause = null;
+      for (let i = 0; i + 2 < tokens.length; i++) {
+        const [schema, dot, table] = [tokens[i], tokens[i + 1], tokens[i + 2]];
+        if (!(isNameToken(schema) && schema.value.toLowerCase() === 'information_schema'
+            && dot.type === 'op' && dot.value === '.' && isNameToken(table))) {
+          continue;
+        }
+        if (majorVersion(this.serverVersion) < 5) {
+          throw new MysqlError(ER.NO_SUCH_TABLE, `Table '${schema.value}.${table.value}' doesn't exist`);
+        }
+        if (table.value.toUpperCase() !== 'COLUMNS') {
+          throw new MysqlError(ER.UNKNOWN, `information_schema.${table.value} is not imitated, only COLUMNS`);
+        }
+        withClause = this.informationSchemaColumns(table.value);
+        tokens.splice(i, 3, { type: 'ident', value: table.value, start: schema.start, end: table.end });
+      }
+      return withClause;
+    }
+
+    // information_schema.COLUMNS, with the columns that MySQL 5.5 fills in
+    // from a table definition alone. Not DATA_TYPE: the shim keeps a type as
+    // written, so INTEGER would read "integer", where MySQL says "int". Text
+    // columns are latin1, the server's charset; numbers, dates and blobs have
+    // none, as in MySQL.
+    informationSchemaColumns(name) {
+      const columns = ['TABLE_CATALOG', 'TABLE_SCHEMA', 'TABLE_NAME', 'COLUMN_NAME', 'ORDINAL_POSITION',
+        'COLUMN_DEFAULT', 'IS_NULLABLE', 'CHARACTER_SET_NAME', 'COLLATION_NAME', 'COLUMN_TYPE'];
+      const rows = [];
+      for (const [schema, entry] of [...this.databases].sort(([a], [b]) => (a < b ? -1 : 1))) {
+        for (const table of this.tableNames(entry)) {
+          this.definition(entry, table).columns.forEach((column, i) => {
+            const text = typeKind(column.base) === 'text';
+            rows.push([
+              quoteString('def'), quoteString(schema), quoteString(table), quoteString(column.name), String(i + 1),
+              column.default === null ? 'NULL' : quoteString(column.default),
+              quoteString(column.notNull ? 'NO' : 'YES'),
+              text ? quoteString('latin1') : 'NULL',
+              text ? quoteString(column.binary ? 'latin1_bin' : 'latin1_swedish_ci') : 'NULL',
+              quoteString(columnTypeText(column)),
+            ]);
+          });
+        }
+      }
+      const body = rows.length
+        ? `VALUES ${rows.map(row => `(${row.join(', ')})`).join(', ')}`
+        : `SELECT ${columns.map(() => 'NULL').join(', ')} WHERE 0`;
+      return `WITH ${quoteIdent(name)}(${columns.map(quoteIdent).join(', ')}) AS (${body}) `;
+    }
+
     scratchDatabase() {
       if (!this.scratch) {
         this.scratch = new this.SQL.Database();
-        registerFunctions(this.scratch, this.now);
+        registerFunctions(this.scratch, this.now, this.serverVersion);
       }
       return this.scratch;
     }
@@ -1949,8 +2115,7 @@
       }
       if (stream.acceptWord('VARIABLES')) {
         const like = this.likeFilter(stream);
-        const variables = [['version', this.serverVersion], ['character_set', 'latin1'], ['sql_mode', '0']];
-        return this.textResult(['Variable_name', 'Value'], variables.filter(([name]) => like(name)));
+        return this.textResult(['Variable_name', 'Value'], serverVariables(this.serverVersion).filter(([name]) => like(name)));
       }
       if (stream.acceptWord('STATUS')) {
         return this.textResult(['Variable_name', 'Value'], [['Uptime', '0'], ['Threads_connected', String(this.links.size)]]);

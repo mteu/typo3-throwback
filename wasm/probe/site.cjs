@@ -423,10 +423,11 @@ async function check(label, test) {
         return doc && doc.readyState === 'complete' && /\/site\/$/.test(doc.location.pathname);
       });
       // Until the shell turns it away, the frameset's frames run in the
-      // iframe, where top is the shell. 3.8.1's call a function of the
-      // backend's own top window as they load, which the shell does not
-      // have: the reason the backend gets a tab of its own. Only those
-      // errors are expected here.
+      // iframe, where top is the shell. 3.8.1's and 4.0.13's call a function
+      // of the backend's own top window as they load, which the shell does
+      // not have: the reason the backend gets a tab of its own. In both it
+      // is alt_menu.php's onload="top.restoreHighlightedModuleMenuItem()",
+      // which only alt_main.php defines. Only those errors are expected here.
       const expected = /: top\.\w+ is not a function$/;
       const thrown = pageErrors.splice(errorsBefore);
       pageErrors.push(...thrown.filter(error => !expected.test(error)));

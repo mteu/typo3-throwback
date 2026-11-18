@@ -507,8 +507,8 @@ jobs:
 
       # The login above leaves its session in ./jar. With it logged in, a client
       # with no cookie must still get a session of its own. 3.3 makes a session
-      # id from the clock alone, so a clock that stands still fails this; it did,
-      # until 3.3/compose.yaml let the clock run (issue #12).
+      # id from the clock alone, so a clock that stands still would fail this.
+      # 3.3/compose.yaml lets the clock run.
       - name: Fresh sessions after a login
         run: |
           set -euo pipefail
@@ -656,8 +656,8 @@ jobs:
       # (.github/scripts/ci-backend-session.sh says why), opens the frameset and
       # the seeded page's header, and then checks that fresh clients still get
       # fresh sessions. 3.8 makes a session id from the clock and the process id,
-      # so under a clock that stands still one Apache child hands out one id. It
-      # did, until 3.8/Dockerfile let the clock run (issue #13).
+      # so under a clock that stands still one Apache child hands out one id.
+      # 3.8/Dockerfile lets the clock run.
       - name: Backend login and record editing
         env:
           BASE: http://127.0.0.1:8038

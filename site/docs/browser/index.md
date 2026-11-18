@@ -12,7 +12,7 @@ install.
 | --- | --- |
 | ![](../assets/marks/mark1-blue-2002.png){ .mark } [3.3.0](3.3.md) | [open it](../../3.3/) |
 | ![](../assets/marks/mark2-sheets-2003.png){ .mark } [3.8.1](3.8.md) | [open it](../../3.8/) |
-| ![](../assets/marks/mark3-orange-green-4x.png){ .mark } 4.0.13 | not yet |
+| ![](../assets/marks/mark3-orange-green-4x.png){ .mark } [4.0.13](4.0.md) | [open it](../../4.0/) |
 | ![](../assets/marks/mark4-orange-2012.png){ .mark } 4.5.40 | not yet |
 | ![](../assets/marks/mark4-orange-2012.png){ .mark } 6.2.31 | not yet |
 
@@ -35,9 +35,11 @@ what the page hands it.
 - **PHP is the original interpreter.** PHP 4.4.9 is compiled from unmodified
   upstream source to WebAssembly, with Emscripten. The PHP-in-WebAssembly builds we
   know of start at PHP 7.4, so this one is built here.
-- **The database is SQLite, answering as MySQL 3.23.** TYPO3 talks to PHP's own,
-  unmodified `mysql` extension. Underneath, a small client library answers its
-  calls from SQLite, also compiled to WebAssembly.
+- **The database is SQLite, answering as the MySQL each release expects.**
+  TYPO3 talks to PHP's own, unmodified `mysql` extension. Underneath, a small
+  client library answers its calls from SQLite, also compiled to WebAssembly.
+  For 3.3.0 and 3.8.1 it answers as MySQL 3.23.49, for 4.0.13 as MySQL
+  5.5.62, the server of its Docker stack.
 - **A service worker carries each request to PHP.** Your browser asks for a
   page as usual. The service worker hands the request to PHP, running in a
   worker of your tab, and returns its answer.

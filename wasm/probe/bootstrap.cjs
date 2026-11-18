@@ -3,8 +3,8 @@
 //   node bootstrap.cjs <work-root> <release>
 // The site is the one the browser runs (release-site.cjs), minus the database.
 //
-// For 3.8.1 this is part of the evidence that it runs on PHP 4.4.9, though
-// its Docker stack runs PHP 5.6.40 (#52).
+// For 3.8.1 and 4.0.13 this is part of the evidence that they run on PHP
+// 4.4.9, though their Docker stacks run PHP 5.6.40.
 'use strict';
 
 const assert = require('assert');

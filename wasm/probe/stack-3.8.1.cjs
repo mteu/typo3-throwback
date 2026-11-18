@@ -14,7 +14,7 @@
 //   title, which the frontend then shows
 //   the admin uploads a file into fileadmin/, and TYPO3 refuses a .php one
 //   the Install Tool's GD tests pass, and its ImageMagick tests say they are
-//   skipped
+//   skipped, and it sends its test mail, to nowhere, as Docker does
 //   a client with no cookie gets a session of its own
 //   the MySQL server rejects nothing TYPO3 sends
 //   the site's snapshot restores into a new instance, which renders the same
@@ -23,18 +23,16 @@
 'use strict';
 
 const {
-  USER_AGENT, md5, check, finish, cookiesFrom, client, browser, printProvisionOutput, assertNoPhpErrors,
+  USER_AGENT, EDIT_ROOT_PAGE, check, finish, client, browser, printProvisionOutput, assertNoPhpErrors,
   watchRejectedStatements, checkNothingRejected, checkClock, checkSecondProvision, checkSourceProtection, checkRestore,
+  checkBackendLogin, checkBackendLoginOverHttps, saveTitle, checkUploads, checkUploadRestored, checkInstallToolImages,
+  checkInstallToolMail, checkFreshSessions,
 } = require('./stack.cjs');
-const { readForm, multipart } = require('./forms.cjs');
 const assert = require('assert');
 const path = require('path');
 const { bootRelease } = require('./release-site.cjs');
 
 const workRoot = path.resolve(process.argv[2]);
-const BOUNDARY = 'probeboundary';
-const visibleText = response => response.text.replace(/<[^>]+>/g, ' ').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ');
-const urlEncoded = fields => fields.map(([name, value]) => `${encodeURIComponent(name)}=${encodeURIComponent(value)}`).join('&');
 
 (async () => {
   const started = Date.now();
@@ -75,7 +73,7 @@ const urlEncoded = fields => fields.map(([name, value]) => `${encodeURIComponent
     assert.ok(response.text.includes(`<title>${pageTitle}</title>`), `the page title is not "${pageTitle}"`);
     // The Docker job expects PHP 5.6.40, which its image runs. Here 3.8.1
     // runs on PHP 4.4.9, the oldest PHP it supports in this repository's
-    // builds (#52).
+    // builds.
     assert.match(response.text, /Rendered by TypoScript on PHP 4\.4\.9/);
     // The release day, within its first hour, as the job asserts.
     assert.match(response.text, /Page generated&nbsp;2005-11-14 12:[0-9]{2}:[0-9]{2}/);
@@ -111,60 +109,9 @@ const urlEncoded = fields => fields.map(([name, value]) => `${encodeURIComponent
 
   // --- the backend: the job's "Backend login and record editing" step ---
 
-  // .github/scripts/ci-backend-session.sh's login_and_expect: the form
-  // request starts the PHP session that keeps the challenge, and the
-  // password goes as md5(username:md5(password):challenge), as the form's
-  // own JavaScript computes it ("superchallenged", typo3/index.php:169-175).
   const admin = browser(site);
-  check('the login, as the form computes it, redirects to the frameset', () => {
-    const form = admin('typo3/index.php');
-    const challenge = (form.text.match(/name="challenge" value="([0-9a-f]{32})"/) || [])[1];
-    assert.ok(challenge, 'the login form carried no challenge');
-    const response = admin('typo3/index.php', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
-        // Checked against the host on submitted logins.
-        Referer: 'http://localhost/typo3/index.php',
-      },
-      body: urlEncoded([
-        ['login_status', 'login'], ['username', 'admin'], ['p_field', ''],
-        ['userident', md5(`admin:${md5('password')}:${challenge}`)], ['challenge', challenge], ['interface', 'backend'],
-      ]),
-    });
-    console.log(`     ${response.status} to ${response.header('Location')}`);
-    assert.strictEqual(response.status, 302);
-    assert.strictEqual(response.header('Location'), 'http://localhost/typo3/alt_main.php');
-    assert.ok(admin.cookie('be_typo_user'), 'no backend session cookie');
-  });
-
-  // The public site is HTTPS. The redirect is absolute, so an http:// one
-  // would leave the service worker's scope. Asked as sw.js asks, through the
-  // site's own cookie jar.
-  check('over HTTPS, the login redirects to https://', () => {
-    const request = (method, body = null) => site.handle({
-      method,
-      path: '/typo3/index.php',
-      headers: {
-        Host: 'localhost',
-        'User-Agent': USER_AGENT,
-        ...(body ? { 'Content-Type': 'application/x-www-form-urlencoded', Referer: 'https://localhost/typo3/index.php' } : {}),
-      },
-      body: body && Buffer.from(body, 'latin1'),
-      https: true,
-    });
-    const form = Buffer.from(request('GET').body).toString('latin1');
-    const challenge = (form.match(/name="challenge" value="([0-9a-f]{32})"/) || [])[1];
-    assert.ok(challenge, 'the login form carried no challenge');
-    const response = request('POST', urlEncoded([
-      ['login_status', 'login'], ['username', 'admin'], ['p_field', ''],
-      ['userident', md5(`admin:${md5('password')}:${challenge}`)], ['challenge', challenge], ['interface', 'backend'],
-    ]));
-    const location = (response.headers.find(([name]) => name.toLowerCase() === 'location') || [])[1];
-    console.log(`     ${response.status} to ${location}`);
-    assert.strictEqual(response.status, 302);
-    assert.strictEqual(location, 'https://localhost/typo3/alt_main.php');
-  });
+  checkBackendLogin(admin);
+  checkBackendLoginOverHttps(site);
 
   check('alt_main.php answers with the frameset', () => {
     const response = admin('typo3/alt_main.php');
@@ -173,12 +120,9 @@ const urlEncoded = fields => fields.map(([name, value]) => `${encodeURIComponent
     assertNoPhpErrors(response);
   });
 
-  // returnUrl is not decoration, as the job says: with fewer than two GET
-  // vars alt_doc.php redirects to the last open document.
-  const editQuery = 'returnUrl=db_layout.php%3Fid%3D1&edit%5Bpages%5D%5B1%5D=edit';
   let editor = null;
   check('alt_doc.php renders the root page header for editing', () => {
-    editor = admin('typo3/alt_doc.php', { query: editQuery });
+    editor = admin('typo3/alt_doc.php', { query: EDIT_ROOT_PAGE });
     if (!/name="data\[pages\]\[1\]\[title\]"/.test(editor.text)) {
       console.log(`     ${editor.status}, ${editor.body.length} bytes, log: ${editor.log.join(' | ')}`);
     }
@@ -194,25 +138,9 @@ const urlEncoded = fields => fields.map(([name, value]) => `${encodeURIComponent
     assert.doesNotMatch(editor.text, /rm\.saveDoc|LLL:EXT:/);
   });
 
-  // The form as a browser posts it when the title is changed and the save
-  // button is clicked: to alt_doc.php itself, which hands the data to
-  // TCEmain. The visible field and the hidden one the browser's JavaScript
-  // copies it into both carry the new title.
   const newTitle = 'TYPO3 3.8.1, saved in the backend';
   check('saving the form stores the new title, and the frontend shows it', () => {
-    const { action, fields } = readForm(editor.text, 'editform');
-    const posted = fields.map(([name, value]) => [name, /^data\[pages\]\[1\]\[title\](_hr)?$/.test(name) ? newTitle : value]);
-    posted.push(['_savedok.x', '8'], ['_savedok.y', '9']);
-    const url = new URL(action, 'http://localhost/');
-    const response = admin(url.pathname.slice(1), {
-      method: 'POST',
-      query: url.search.slice(1),
-      headers: {
-        'Content-Type': `multipart/form-data; boundary=${BOUNDARY}`,
-        Referer: `http://localhost/typo3/alt_doc.php?${editQuery}`,
-      },
-      body: multipart(BOUNDARY, posted.map(([name, value]) => ({ name, value }))),
-    });
+    const response = saveTitle(admin, editor, newTitle);
     assert.strictEqual(response.status, 200);
     assertNoPhpErrors(response);
     assert.ok(response.text.includes(`value="${newTitle}"`), 'the form did not come back with the new title');
@@ -224,134 +152,14 @@ const urlEncoded = fields => fields.map(([name, value]) => `${encodeURIComponent
   });
   frontendChecks('the frontend renders the saved title through TypoScript', get);
 
-  // ci-backend-session.sh's assert_admin_can_upload: the file list's upload
-  // form, posted to tce_file.php. On success it redirects; on any error it
-  // answers 200 with the error. 3.8/provision.php gives the admin
-  // fileoper_perms = 7, without which even an admin may not upload.
-  // disable_exec_function makes TYPO3 move the file with PHP's functions.
-  const upload = (filename, content) => admin('typo3/tce_file.php', {
-    method: 'POST',
-    headers: { 'Content-Type': `multipart/form-data; boundary=${BOUNDARY}`, Referer: 'http://localhost/typo3/file_upload.php' },
-    body: multipart(BOUNDARY, [
-      { name: 'file[upload][1][target]', value: `${site.docroot}/fileadmin` },
-      { name: 'file[upload][1][data]', value: '1' },
-      { name: 'upload_1', filename, value: content },
-      { name: 'redirect', value: 'file_list.php' },
-    ]),
-  });
-  // Every byte value TYPO3 might mangle: a line end, latin1, NUL.
-  const uploaded = 'Uploaded through tce_file.php.\n\xe4\xf6\xfc\xdf\x00\xff\r\n';
-  check('the admin uploads a file into fileadmin/, and it is served back byte for byte', () => {
-    const response = upload('ci-upload.txt', uploaded);
-    if (response.status !== 302) {
-      console.log(`     ${visibleText(response).slice(0, 400)}`);
-    }
-    assert.strictEqual(response.status, 302);
-    assert.strictEqual(response.header('Location'), 'http://localhost/typo3/file_list.php');
-    assert.deepStrictEqual(response.log, []);
-    const served = site.handle({ path: '/fileadmin/ci-upload.txt', headers: { Host: 'localhost', 'User-Agent': USER_AGENT } });
-    assert.strictEqual(served.status, 200);
-    assert.strictEqual(Buffer.from(served.body).toString('latin1'), uploaded);
-  });
-
-  check('TYPO3 itself refuses a .php upload', () => {
-    const response = upload('refused.php', '<?php echo "uploaded"; ?>');
-    assert.strictEqual(response.status, 200);
-    assert.match(visibleText(response), /Fileextension &quot;php&quot; is not allowed in &quot;\/var\/www\/fileadmin\/&quot;!/);
-    assert.deepStrictEqual(site.php.FS.readdir(`${site.docroot}/fileadmin`).filter(name => name.endsWith('.php')), []);
-  });
-
-  // ImageMagick cannot run in WebAssembly. With [GFX][im] = 0, 3.8.1's own
-  // Install Tool skips its ImageMagick tests and says why, and runs its GD
-  // tests against the reference images it ships. Unlike 3.3.0's, it does not
-  // look for ImageMagick, so PHP logs nothing.
-  const installTool = browser(site);
-  check('the Install Tool logs in with joh316 through its own form', () => {
-    const page = installTool('typo3/install/index.php');
-    const { action, fields } = readForm(page.text);
-    const response = installTool(`typo3/install/${action}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: urlEncoded(fields.map(([name, value]) => [name, name === 'password' ? 'joh316' : value])),
-    });
-    assert.strictEqual(response.status, 302);
-    assert.strictEqual(response.header('Location'), 'index.php?TYPO3_INSTALL[type]=about');
-    assert.ok(installTool.cookie('Typo3InstallTool'), 'no Install Tool session cookie');
-  });
-
-  check("the Install Tool's image tests: GD's pass, ImageMagick's are skipped as 3.8.1 intends", () => {
-    const imageTest = type => {
-      const response = installTool('typo3/install/index.php', { query: `TYPO3_INSTALL[type]=images&TYPO3_INSTALL[images_type]=${type}` });
-      assert.strictEqual(response.status, 200);
-      assertNoPhpErrors(response);
-      return response;
-    };
-    const gd = imageTest('gdlib');
-    const text = visibleText(gd);
-    assert.match(text, /ImageMagick enabled: 0 .* GDLib enabled: 1 GDLib using PNG: 0 GDLib 2 enabled: 1/);
-    // Each test shows the server's image beside 3.8.1's reference, with sizes.
-    assert.match(text, /Create simple image Your server: Reference: (\d+) , 170x136 pixels \1 , 170x136 pixels/);
-    assert.match(text, /Create image from file Your server: Reference: ([\d.]+ K), 170x136 pixels \1, 170x136 pixels/);
-    // FreeType 2 draws the text with other pixels than 2005's did, so the
-    // size differs from the reference.
-    assert.match(text, /Render text with TrueType font Your server: Reference: \d+ , 170x136 pixels/);
-    assert.match(text, /ImageMagick is needed to generate text with the niceText option/);
-    assert.match(text, /ImageMagick is needed to generate shadows/);
-    const images = gd.text.match(/typo3temp\/install_[0-9a-f]+\.gif/g) || [];
-    assert.strictEqual(new Set(images).size, 3);
-    for (const image of images) {
-      assert.strictEqual(Buffer.from(site.php.FS.readFile(`${site.docroot}/${image}`)).subarray(0, 4).toString('latin1'), 'GIF8');
-    }
-    for (const type of ['read', 'write', 'scaling', 'combining']) {
-      assert.match(visibleText(imageTest(type)), /Test skipped Use of ImageMagick has been disabled in the configuration/, type);
-    }
-  });
-
-  // Not in the Docker job: the Install Tool's test mail, with mail() and with
-  // t3lib_htmlmail (class.tx_install.php:1599-1613). Docker's sendmail_path is
-  // /bin/true, so the mail is "sent" and goes nowhere; here too, through
-  // native/popen.c. Before that, PHP had no mail(), and this was a fatal error.
-  check('the Install Tool sends its test mail, with mail() and with t3lib_htmlmail, as Docker does to /bin/true', () => {
-    for (const htmlmail of [false, true]) {
-      const response = installTool('typo3/install/index.php', {
-        query: 'TYPO3_INSTALL[type]=general',
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: urlEncoded([['TYPO3_INSTALL[check_mail]', 'admin@example.com'], ...(htmlmail ? [['TYPO3_INSTALL[use_htmlmail]', 'on']] : [])]),
-      });
-      assert.strictEqual(response.status, 200, `htmlmail: ${htmlmail}`);
-      assertNoPhpErrors(response);
-      assert.match(visibleText(response), /MAIL WAS SENT TO: admin@example\.com/, `htmlmail: ${htmlmail}`);
-    }
-  });
-
-  // ci-backend-session.sh's assert_fresh_sessions_are_distinct, last as in
-  // the job. 3.8.1 makes a session id from the clock and the process id, so
-  // under a clock that stands still every request would get the same one
-  // (#13). Here the clock runs, as in Docker.
-  check('twelve cookieless requests get twelve fresh sessions, none the logged-in one', () => {
-    const challenges = new Set();
-    const sessions = new Set();
-    for (let i = 0; i < 12; i++) {
-      const response = get('typo3/index.php');
-      assert.strictEqual(response.status, 200, `attempt ${i + 1} answered ${response.status}: it found someone's session`);
-      const challenge = (response.text.match(/name="challenge" value="([0-9a-f]{32})"/) || [])[1];
-      const session = (cookiesFrom(response).find(pair => pair.startsWith('be_typo_user=')) || '').slice('be_typo_user='.length);
-      assert.ok(challenge && session, `attempt ${i + 1} carried no challenge or no session cookie`);
-      assert.notStrictEqual(session, admin.cookie('be_typo_user'), `attempt ${i + 1} was handed the logged-in session`);
-      challenges.add(challenge);
-      sessions.add(session);
-    }
-    assert.strictEqual(challenges.size, 12);
-    assert.strictEqual(sessions.size, 12);
-  });
+  checkUploads(site, admin, /Fileextension &quot;php&quot; is not allowed in &quot;\/var\/www\/fileadmin\/&quot;!/);
+  const installTool = checkInstallToolImages(site);
+  checkInstallToolMail(installTool);
+  checkFreshSessions(site, admin);
 
   checkNothingRejected(rejected);
 
-  const restored = await checkRestore(site, workRoot, frontendChecks);
-  check('the uploaded file is restored too', () => {
-    assert.strictEqual(Buffer.from(restored.php.FS.readFile(`${restored.docroot}/fileadmin/ci-upload.txt`)).toString('latin1'), uploaded);
-  });
+  checkUploadRestored(await checkRestore(site, workRoot, frontendChecks));
 
   finish('stack 3.8.1');
 })();

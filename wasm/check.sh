@@ -97,9 +97,35 @@ for release in "${releases[@]}"; do
             ;;
         3.8.1)
             # None, the bundled phpMyAdmin 2.6.4 included: 3.8.1 runs on PHP
-            # 4.4.9, though its Docker stack runs PHP 5.6.40 (#52).
+            # 4.4.9, though its Docker stack runs PHP 5.6.40.
             test "$total" -eq 803
             test -z "$failing"
+            ;;
+        4.0.13)
+            # All nine are PHP 5 code in the bundled ADOdb, which only the
+            # DBAL extension loads, and DBAL is not in the default extList
+            # (t3lib/config_default.php:107). Even with DBAL, PHP 4 never
+            # reaches them:
+            # - adodb-iterator: only when PHP_VERSION >= 5 (adodb.inc.php:2699)
+            # - adodb-exceptions: only when PHP_VERSION >= 5
+            #   (tests/test-active-record.php:8), or from two PHP 5 tests
+            # - ado5: only when PHP_VERSION >= 5 (adodb.inc.php:3938,
+            #   adodb-ado_access.inc.php:18, adodb-ado_mssql.inc.php:22)
+            # - pdo and pdo_mysql: only for a "pdo" DSN, and PDO is PHP 5.1's
+            # - tests/: ADOdb's own test scripts, which nothing includes
+            test "$total" -eq 516
+            test "$failing" = './typo3/sysext/adodb/adodb/adodb-exceptions.inc.php
+./typo3/sysext/adodb/adodb/adodb-iterator.inc.php
+./typo3/sysext/adodb/adodb/drivers/adodb-ado5.inc.php
+./typo3/sysext/adodb/adodb/drivers/adodb-pdo.inc.php
+./typo3/sysext/adodb/adodb/drivers/adodb-pdo_mysql.inc.php
+./typo3/sysext/adodb/adodb/tests/pdo.php
+./typo3/sysext/adodb/adodb/tests/test-php5.php
+./typo3/sysext/adodb/adodb/tests/test2.php
+./typo3/sysext/adodb/adodb/tests/test3.php'
+
+            echo "== TYPO3 4.0.13's clone() for PHP 4, which PHP 5 never loads"
+            "${php[@]}" -d error_reporting=2047 "$here/probe/compat-php5.php" "$tree"
             ;;
         *)
             echo "no lint expectations for $release" >&2
@@ -142,8 +168,8 @@ if [ "${SKIP_BROWSER:-0}" != 1 ]; then
         node "$here/probe/site.cjs" "$work/site" "$release"
     done
 
-    echo "== two releases on one origin: each its own PHP, snapshot and reset"
-    node "$here/probe/two-sites.cjs" "$work/site"
+    echo "== every release on one origin: each its own PHP, snapshot and reset"
+    node "$here/probe/two-sites.cjs" "$work/site" "${releases[@]}"
 
     echo "== every release's backend login over HTTPS, as the public site serves it"
     node "$here/probe/https.cjs" "$work/site" "${releases[@]}"
