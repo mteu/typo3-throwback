@@ -43,6 +43,9 @@ on:
     paths:
       - 'wasm/**'
       - 'vendor-src/php-4.4.9/**'
+      - 'vendor-src/php-5.6.40/**'
+      - 'vendor-src/libxml2-2.9.14/**'
+      - 'vendor-src/typo3-4.5.40/**'
       - 'vendor-src/typo3-3.3.0/**'
       - 'vendor-src/typo3-3.8.1/**'
       - 'vendor-src/typo3-4.0.13/**'
@@ -104,6 +107,12 @@ jobs:
         run: |
           source "$RUNNER_TEMP/emsdk/emsdk_env.sh"
           wasm/php-4.4.9/build.sh . "$RUNNER_TEMP/wasm/php-4.4.9"
+
+      # check.sh probes its CLI and request loop, and lints 4.5.40 with it.
+      - name: Build PHP 5.6.40 to WebAssembly
+        run: |
+          source "$RUNNER_TEMP/emsdk/emsdk_env.sh"
+          wasm/php-5.6.40/build.sh . "$RUNNER_TEMP/wasm/php-5.6.40"
 
       # Ends by assembling the site and driving it in Chromium.
       - name: Run every check, the site in a browser included

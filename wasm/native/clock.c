@@ -1,6 +1,6 @@
 /*
- * Wall clock for PHP 4 under Emscripten: microsecond resolution, and a start
- * time the host can set.
+ * Wall clock for PHP 4.4.9 and PHP 5.6.40 under Emscripten: microsecond
+ * resolution, and a start time the host can set.
  *
  * Resolution. Emscripten's gettimeofday() has millisecond resolution, so PHP
  * 4's uniqid() (usleep(1) + gettimeofday) repeats within a millisecond.
@@ -16,8 +16,9 @@
  * Emscripten's libc reads the wall clock in three places that do not call
  * each other: time() and gettimeofday() (system/lib/libc/emscripten_time.c,
  * both weak) and clock_gettime(), which goes to the WASI clock. PHP's time()
- * and date() use the first, uniqid() and microtime() the second. All three are
- * replaced here, so no reader sees today while another sees 2002.
+ * and date() use the first, uniqid() and microtime() the second, and so do
+ * PHP 5's DateTime and $_SERVER['REQUEST_TIME']. All three are replaced here,
+ * so no reader sees today while another sees the release day.
  *
  * Time zone. Emscripten's localtime() and mktime() take the zone from the
  * JS Date, which is the visitor's. The container runs in UTC, and so does

@@ -17,41 +17,6 @@ here=$(dirname "$(realpath "$0")")
 
 (cd "$here" && npm ci --no-audit --no-fund --silent)
 
-# --- PHP 4.4.9 --------------------------------------------------------------
-php4="$work/php-4.4.9/out"
-php=(node "$php4/node/php.js" -n)
-
-echo "== PHP 4 semantics"
-"${php[@]}" "$here/probe/semantics.php"
-
-echo "== fatal error bailout"
-set +e
-fatal=$("${php[@]}" "$here/probe/fatal.php" 2>&1)
-status=$?
-set -e
-echo "$fatal"
-test "$status" -eq 255
-grep -q 'Fatal error: Call to undefined function: undefined_function_call()' <<<"$fatal"
-grep -q 'shutdown function ran after fatal' <<<"$fatal"
-! grep -q never <<<"$fatal"
-
-echo "== mail() through /bin/true, as every Docker stack's sendmail_path"
-"${php[@]}" "$here/probe/mail.php"
-"${php[@]}" -d sendmail_path=/usr/sbin/sendmail "$here/probe/mail.php" refused
-
-echo "== request loop: many requests in one instance"
-node "$here/probe/request-loop.cjs" "$php4/sapi-node" "$work/request-loop"
-
-echo "== MySQL 3.23 on SQLite"
-node "$here/probe/mysql-sqlite.cjs"
-
-# --- every release ----------------------------------------------------------
-# A release file's field, read by node, as the runtime reads it.
-field() {
-    node -e 'const r = require(process.argv[1]); process.stdout.write(String(r[process.argv[2]]))' \
-        "$here/releases/$1.js" "$2"
-}
-
 # Prints the *.php and *.inc files under an unpacked release that the CLI in
 # "${php[@]}" does not parse, one per line, sorted.
 lint_failures() {
@@ -63,6 +28,92 @@ lint_failures() {
             fi
         done
     )
+}
+
+# probe/fatal.php on the CLI in "${php[@]}": the engine bails out of the
+# script with exit status 255 and the message given, and still runs the
+# shutdown function.
+check_bailout() {
+    local fatal status
+    set +e
+    fatal=$("${php[@]}" "$here/probe/fatal.php" 2>&1)
+    status=$?
+    set -e
+    echo "$fatal"
+    test "$status" -eq 255
+    grep -qF "$1" <<<"$fatal"
+    grep -q 'shutdown function ran after fatal' <<<"$fatal"
+    ! grep -q never <<<"$fatal"
+}
+
+# --- PHP 4.4.9 --------------------------------------------------------------
+php4="$work/php-4.4.9/out"
+php=(node "$php4/node/php.js" -n)
+
+echo "== PHP 4 semantics"
+"${php[@]}" "$here/probe/semantics.php"
+
+echo "== fatal error bailout"
+check_bailout 'Fatal error: Call to undefined function: undefined_function_call()'
+
+echo "== mail() through /bin/true, as every Docker stack's sendmail_path"
+"${php[@]}" "$here/probe/mail.php"
+"${php[@]}" -d sendmail_path=/usr/sbin/sendmail "$here/probe/mail.php" refused
+
+echo "== request loop: many requests in one instance"
+node "$here/probe/request-loop.cjs" "$php4/sapi-node" "$work/request-loop" 4.4.9
+
+echo "== MySQL 3.23 on SQLite"
+node "$here/probe/mysql-sqlite.cjs"
+
+# --- PHP 5.6.40 -------------------------------------------------------------
+php5="$work/php-5.6.40/out"
+php=(node "$php5/node/php.js" -n)
+
+echo "== PHP 5 semantics"
+"${php[@]}" "$here/probe/semantics-5.php"
+
+echo "== fatal error bailout, on PHP 5"
+check_bailout 'Fatal error: Call to undefined function undefined_function_call()'
+
+echo "== PHP 5's bundled extensions: ctype, filter, hash, json, tokenizer, zlib"
+"${php[@]}" "$here/probe/extensions-5.php"
+
+echo "== mail() through /bin/true, on PHP 5"
+"${php[@]}" "$here/probe/mail.php"
+"${php[@]}" -d sendmail_path=/usr/sbin/sendmail "$here/probe/mail.php" refused
+
+echo "== request loop on PHP 5: many requests, php://input, the raw-POST deprecation, uploads, ext/mysql, sessions, the clock"
+node "$here/probe/request-loop.cjs" "$php5/sapi-node" "$work/request-loop-5" 5.6.40
+
+echo "== request loop on PHP 5, the browser build: its in-memory filesystem, through php-runtime.js"
+node "$here/probe/request-loop-web.cjs" "$php5/sapi-web"
+
+# 4.5.40 has no release file, so the loop below does not lint it.
+echo "== lint every PHP file in TYPO3 4.5.40, as released, on PHP 5.6.40"
+(cd "$repo/vendor-src/typo3-4.5.40" && sha256sum -c SHA256SUMS)
+rm -rf "$work/typo3-4.5.40"
+mkdir "$work/typo3-4.5.40"
+tar -xzf "$repo/vendor-src/typo3-4.5.40/typo3_src-4.5.40.tar.gz" -C "$work/typo3-4.5.40"
+tree="$work/typo3-4.5.40/typo3_src-4.5.40"
+failing=$(lint_failures "$tree")
+total=$(cd "$tree" && find . \( -name '*.php' -o -name '*.inc' \) | wc -l)
+echo "files: $total, failing:"
+echo "$failing"
+test "$total" -eq 1736
+test -z "$failing"
+
+echo "== ext/xml, dom and SimpleXML on libxml2, with 4.5.40's locallang files"
+"${php[@]}" -d error_reporting=22519 "$here/probe/xml-5.php" "$tree"
+
+echo "== GD, FreeType and zlib on PHP 5, with a font from the 4.5.40 source"
+"${php[@]}" "$here/probe/gd.php" "$tree/t3lib/fonts/vera.ttf"
+
+# --- every release ----------------------------------------------------------
+# A release file's field, read by node, as the runtime reads it.
+field() {
+    node -e 'const r = require(process.argv[1]); process.stdout.write(String(r[process.argv[2]]))' \
+        "$here/releases/$1.js" "$2"
 }
 
 releases=()

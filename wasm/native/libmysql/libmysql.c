@@ -531,6 +531,13 @@ char *mysql_get_client_info(void)
     return MYSQL_SERVER_VERSION;
 }
 
+/* MySQL 4.0 added this. PHP 5's ext/mysql calls it on every connect, and
+   warns when its major and minor version differ from the header's. */
+unsigned long mysql_get_client_version(void)
+{
+    return MYSQL_VERSION_ID;
+}
+
 char *mysql_get_server_info(MYSQL *mysql)
 {
     return mysql->server_version;

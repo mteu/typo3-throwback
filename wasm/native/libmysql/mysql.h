@@ -164,6 +164,7 @@ MYSQL_RES *mysql_list_processes(MYSQL *mysql);
 int mysql_create_db(MYSQL *mysql, const char *db);
 int mysql_drop_db(MYSQL *mysql, const char *db);
 char *mysql_get_client_info(void);
+unsigned long mysql_get_client_version(void);
 char *mysql_get_server_info(MYSQL *mysql);
 char *mysql_get_host_info(MYSQL *mysql);
 unsigned int mysql_get_proto_info(MYSQL *mysql);

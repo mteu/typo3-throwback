@@ -25,6 +25,20 @@ Source archives in vendor-src/
     This product includes the Zend Engine, freely available at
     http://www.zend.com
 
+  PHP 5.6.40
+    PHP License 3.01, with the Zend Engine under the Zend Engine License
+    2.00. The archive carries both. wasm/php-5.6.40/build.sh compiles it to
+    WebAssembly for the checks in wasm/check.sh. Nothing built from it is
+    published. Its archive bundles PCRE 8.38, under the BSD licence in
+    ext/pcre/pcrelib/LICENCE, and GD 2.1, under the licence in
+    ext/gd/libgd/COPYING. The build links GD with the same Emscripten
+    ports of zlib, libpng, libjpeg and FreeType as the PHP 4.4.9 build.
+
+  libxml2 2.9.14
+    MIT licence, in the archive's Copyright file. wasm/php-5.6.40/build.sh
+    compiles it into PHP 5.6.40's WebAssembly build, for its XML
+    extensions, and puts that file beside the binaries' other licences.
+
   Libraries bundled in the TYPO3 archives
     Each under its own licence, shipped with its source in the archive and,
     unmodified, in the image. Each stack's LICENCES.md lists the licence
