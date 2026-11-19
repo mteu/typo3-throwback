@@ -89,26 +89,6 @@ node "$here/probe/request-loop.cjs" "$php5/sapi-node" "$work/request-loop-5" 5.6
 echo "== request loop on PHP 5, the browser build: its in-memory filesystem, through php-runtime.js"
 node "$here/probe/request-loop-web.cjs" "$php5/sapi-web"
 
-# 4.5.40 has no release file, so the loop below does not lint it.
-echo "== lint every PHP file in TYPO3 4.5.40, as released, on PHP 5.6.40"
-(cd "$repo/vendor-src/typo3-4.5.40" && sha256sum -c SHA256SUMS)
-rm -rf "$work/typo3-4.5.40"
-mkdir "$work/typo3-4.5.40"
-tar -xzf "$repo/vendor-src/typo3-4.5.40/typo3_src-4.5.40.tar.gz" -C "$work/typo3-4.5.40"
-tree="$work/typo3-4.5.40/typo3_src-4.5.40"
-failing=$(lint_failures "$tree")
-total=$(cd "$tree" && find . \( -name '*.php' -o -name '*.inc' \) | wc -l)
-echo "files: $total, failing:"
-echo "$failing"
-test "$total" -eq 1736
-test -z "$failing"
-
-echo "== ext/xml, dom and SimpleXML on libxml2, with 4.5.40's locallang files"
-"${php[@]}" -d error_reporting=22519 "$here/probe/xml-5.php" "$tree"
-
-echo "== GD, FreeType and zlib on PHP 5, with a font from the 4.5.40 source"
-"${php[@]}" "$here/probe/gd.php" "$tree/t3lib/fonts/vera.ttf"
-
 # --- every release ----------------------------------------------------------
 # A release file's field, read by node, as the runtime reads it.
 field() {
@@ -177,6 +157,21 @@ for release in "${releases[@]}"; do
 
             echo "== TYPO3 4.0.13's clone() for PHP 4, which PHP 5 never loads"
             "${php[@]}" -d error_reporting=2047 "$here/probe/compat-php5.php" "$tree"
+            ;;
+        4.5.40)
+            # None: 4.5.40 runs on PHP 5.6.40, as its Docker stack does.
+            test "$total" -eq 1736
+            test -z "$failing"
+
+            echo "== ext/xml, dom and SimpleXML on libxml2, with 4.5.40's locallang files"
+            "${php[@]}" -d error_reporting=22519 "$here/probe/xml-5.php" "$tree"
+
+            echo "== GD, FreeType and zlib on PHP 5, with a font from the 4.5.40 source"
+            "${php[@]}" "$here/probe/gd.php" "$tree/t3lib/fonts/vera.ttf"
+
+            # What a default site takes where the build has no function to call.
+            echo "== 4.5.40's random bytes and charset conversion, with no openssl, mcrypt, iconv or mbstring"
+            "${php[@]}" -d error_reporting=22519 "$here/probe/core-functions-5.php" "$tree"
             ;;
         *)
             echo "no lint expectations for $release" >&2

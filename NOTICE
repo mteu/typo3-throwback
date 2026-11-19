@@ -26,13 +26,13 @@ Source archives in vendor-src/
     http://www.zend.com
 
   PHP 5.6.40
-    PHP License 3.01, with the Zend Engine under the Zend Engine License
-    2.00. The archive carries both. wasm/php-5.6.40/build.sh compiles it to
-    WebAssembly for the checks in wasm/check.sh. Nothing built from it is
-    published. Its archive bundles PCRE 8.38, under the BSD licence in
-    ext/pcre/pcrelib/LICENCE, and GD 2.1, under the licence in
-    ext/gd/libgd/COPYING. The build links GD with the same Emscripten
-    ports of zlib, libpng, libjpeg and FreeType as the PHP 4.4.9 build.
+    PHP License 3.01, with the Zend Engine under the Zend Engine License 2.00.
+    The archive carries both. wasm/php-5.6.40/build.sh compiles it to
+    WebAssembly, which the site below publishes. Its archive bundles PCRE
+    8.38, under the BSD licence in ext/pcre/pcrelib/LICENCE, and GD 2.1, under
+    the licence in ext/gd/libgd/COPYING. The build links GD with the same
+    Emscripten ports of zlib, libpng, libjpeg and FreeType as the PHP 4.4.9
+    build.
 
   libxml2 2.9.14
     MIT licence, in the archive's Copyright file. wasm/php-5.6.40/build.sh
@@ -78,14 +78,19 @@ Packages the builds install
 
 The site published to GitHub Pages
 
-  .github/workflows/pages.yml publishes PHP 4.4.9 compiled to WebAssembly,
-  sql.js and the TYPO3 3.3.0, 3.8.1 and 4.0.13 archives. The 3.3.0 and 3.8.1
-  archives each bundle a phpMyAdmin, under the GPL. The 4.0.13 archive
-  bundles ADOdb, under the BSD licence or the LGPL 2.1, and htmlArea, under a
-  BSD-style licence. The site carries LICENSES.txt with the notices
-  the PHP License and the Zend Engine License require, the credit lines the
-  libjpeg and FreeType licences require, the licence files in each TYPO3
-  archive, and the full texts of every licence above that applies to it.
+  .github/workflows/pages.yml publishes sql.js, PHP 4.4.9 and PHP 5.6.40
+  compiled to WebAssembly, the second with libxml2, and the TYPO3 3.3.0,
+  3.8.1, 4.0.13 and 4.5.40 archives. The 3.3.0 and 3.8.1 archives each bundle
+  a phpMyAdmin, under the GPL. The 4.0.13 archive bundles ADOdb, under the BSD
+  licence or the LGPL 2.1, and htmlArea, under a BSD-style licence. The 4.5.40
+  archive bundles both as well. Among its other libraries are ExtJS, under the
+  GPL; Prototype, script.aculo.us and SWFUpload, under the MIT licence;
+  SwiftMailer, under the LGPL 3.0; CodeMirror, under zlib- and BSD-style
+  licences; and PHP OpenID, under the Apache 2.0 licence. 4.5/LICENCES.md
+  lists every licence file in it. The site carries LICENSES.txt with the
+  notices the PHP License and the Zend Engine License require, the credit
+  lines the libjpeg and FreeType licences require, the licence files in each
+  TYPO3 archive, and the full texts of every licence above that applies to it.
 
 The TYPO3 mark in README.md
 

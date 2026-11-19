@@ -61,9 +61,10 @@
 // MySQL's number. A statement it cannot translate fails in SQLite instead,
 // as error 1105 with SQLite's message. The stack probes,
 // probe/stack-<release>.cjs, record every statement answered with an error
-// and fail on any. For TYPO3 3.3.0, 3.8.1 and 4.0.13 there are none, over
-// what those probes reach: provisioning, the frontend, the backend login, record
-// editing, uploads and the Install Tool. Beyond that, probe/mysql-sqlite.cjs
+// and fail on any. For TYPO3 3.3.0, 3.8.1, 4.0.13 and 4.5.40 there are none,
+// over what those probes reach: provisioning, the frontend, the backend
+// login, record editing, uploads and the Install Tool, and 4.5.40's page tree
+// over Ext.Direct. Beyond that, probe/mysql-sqlite.cjs
 // covers the ALTER TABLE forms the Install Tool's database compare sends.
 // Other statements are untested.
 'use strict';
