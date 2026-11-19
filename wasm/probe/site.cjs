@@ -8,8 +8,9 @@
 //   browser's time zone is Tokyo's
 //   the web server's rules answer: source 403, images 200
 //   the Backend button opens the backend in a tab of its own, where the
-//   login form, filled in and submitted, logs in to the frameset, and every
-//   module in the menu loads (its frames call top.goToModule())
+//   login form, filled in and submitted, logs in, and every module in the
+//   menu loads: a frameset whose frames call top.goToModule() up to 4.0, an
+//   ExtJS viewport from 4.5 (spec.backend)
 //   the page title is renamed in alt_doc.php, and the frontend shows it
 //   a file uploaded through the backend's form lands in fileadmin/ byte for
 //   byte, and a .php upload is refused
@@ -27,7 +28,9 @@
 // It prints the boot time, the restore time and the memory PHP took.
 //
 // Usage: node site.cjs <site-root> <release>. <site-root> is the directory
-// site/assemble.sh wrote, with wasm/ and the release's directory in it.
+// site/assemble.sh wrote, with wasm/ and the release's directory in it. The
+// release file comes from wasm/releases/, or from $RELEASES, as for
+// assemble.sh.
 // Needs Playwright with Chromium.
 'use strict';
 
@@ -40,6 +43,7 @@ const { serveSite } = require('./static-server.cjs');
 const root = path.resolve(process.argv[2]);
 const releaseName = process.argv[3];
 const spec = require(`./site-${releaseName}.cjs`);
+const release = require(path.join(process.env.RELEASES || path.join(__dirname, '..', 'releases'), `${releaseName}.js`));
 const RELEASE_DIR = releaseName.replace(/\.\d+$/, '');
 const RENAMED = spec.renamed;
 // 1 MiB holding every byte value, so that a body decoded as text anywhere on
@@ -47,6 +51,11 @@ const RENAMED = spec.renamed;
 const UPLOAD_NAME = `upload-${releaseName}.bin`;
 const UPLOAD_BYTES = Buffer.from(Array.from({ length: 1 << 20 }, (_, i) => (i * 131 + (i >> 8)) & 0xff));
 const UPLOAD_SHA256 = crypto.createHash('sha256').update(UPLOAD_BYTES).digest('hex');
+// The frame named content: a <frame> of alt_main.php up to 4.0, an <iframe>
+// of backend.php from 4.5. 4.5's top.content is an object that stands in for
+// the frame, and its document is the frame's window, so the probe goes by
+// the element.
+const CONTENT_FRAME = 'frame[name="content"], iframe[name="content"]';
 
 let failures = 0;
 const pageErrors = [];
@@ -191,7 +200,7 @@ async function check(label, test) {
       assert.match(text, /Provisioned a fresh site/);
       const html = await frontend();
       spec.assertFrontend(html, spec.title);
-      assert.match(html, /Rendered by TypoScript on PHP 4\.4\.9/);
+      assert.ok(html.includes(`Rendered by TypoScript on PHP ${release.php}`), `the frontend does not name PHP ${release.php}`);
       // The release day, within its first hour, as CI asserts for the image.
       assert.match(html, new RegExp(`Page generated&nbsp;${spec.day} 12:[0-9]{2}:[0-9]{2}`));
     });
@@ -272,7 +281,10 @@ async function check(label, test) {
       assert.match(text, /This product includes PHP software, freely available from/);
       assert.match(text, /This product includes the Zend Engine, freely available at/);
       assert.match(text, /The PHP License, version 3\.01/);
-      assert.match(text, /Zend Engine License, version 2\.00/);
+      // PHP 4.4.9's text says "version", PHP 5.6.40's "Version".
+      assert.match(text, /Zend Engine License, [Vv]ersion 2\.00/);
+      assert.ok(text.includes(`PHP ${release.php} (php-${release.php}/php.js, php.wasm), PHP License 3.01`),
+        `LICENSES.txt has no paragraph for PHP ${release.php}`);
       // libjpeg's and FreeType's licences ask for these lines in the
       // documentation of a binary.
       assert.match(text, /This software is based in part on the work of the Independent JPEG\s+Group\./);
@@ -290,21 +302,15 @@ async function check(label, test) {
       await backend.fill('input[name="username"]', 'admin');
       await backend.fill('input[name="p_field"]', 'password');
       await Promise.all([
-        backend.waitForURL(/\/alt_main\.php$/, { timeout: 30000 }),
+        backend.waitForURL(spec.backend.landsOn, { timeout: 30000 }),
         backend.click('input[name="commandLI"]'),
       ]);
-      await backend.waitForFunction(() => document.readyState === 'complete' && document.querySelectorAll('frame').length > 0);
-      const frames = await backend.evaluate(() => [...document.querySelectorAll('frame')].map(f => f.getAttribute('name')));
-      console.log(`     alt_main.php frames: ${frames.join(', ')}`);
-      assert.ok(frames.length >= 2, 'no frameset');
-      assert.strictEqual(await backend.evaluate(() => typeof window.goToModule), 'function');
+      await spec.backend.assertLoaded(backend);
     });
 
-    await check('a module in the menu loads: Web > Page, through top.goToModule()', async () => {
-      const menu = backend.frame({ name: 'menu' });
-      const link = menu.locator('a[onclick*="goToModule(\'web_layout\')"]').first();
-      await link.waitFor();
-      await link.click();
+    await check('a module in the menu loads: Web > Page', async () => {
+      assert.ok((await spec.backend.menuModules(backend)).includes('web_layout'), 'no Web > Page in the menu');
+      await spec.backend.openModule(backend, 'web_layout');
       await backend.waitForFunction(() => {
         const frames = [];
         const walk = win => {
@@ -321,13 +327,11 @@ async function check(label, test) {
     });
 
     await check('every module in the menu opens without a JavaScript or PHP error', async () => {
-      const menu = backend.frame({ name: 'menu' });
-      const modules = await menu.evaluate(() => [...new Set([...document.querySelectorAll('a[onclick*="goToModule("]')]
-        .map(link => link.getAttribute('onclick').match(/goToModule\('([^']+)'/)[1]))]);
+      const modules = await spec.backend.menuModules(backend);
       const local = modules.filter(name => !spec.remoteModules.includes(name));
       const broken = [];
       for (const name of local) {
-        await menu.locator(`a[onclick*="goToModule('${name}')"]`).first().click();
+        await spec.backend.openModule(backend, name);
         await backend.waitForTimeout(500);
         await backend.waitForFunction(() => {
           const pending = [];
@@ -354,23 +358,23 @@ async function check(label, test) {
     });
 
     await check('the page title is renamed in alt_doc.php and saved', async () => {
-      await backend.evaluate(() => {
-        top.content.location.href = 'alt_doc.php?returnUrl=db_layout.php%3Fid%3D1&edit%5Bpages%5D%5B1%5D=edit';
-      });
+      await backend.evaluate(contentFrame => {
+        document.querySelector(contentFrame).contentWindow.location.href = 'alt_doc.php?returnUrl=db_layout.php%3Fid%3D1&edit%5Bpages%5D%5B1%5D=edit';
+      }, CONTENT_FRAME);
       const content = () => backend.frame({ name: 'content' });
-      await backend.waitForFunction(() => {
-        const doc = top.content.document;
+      await backend.waitForFunction(contentFrame => {
+        const doc = document.querySelector(contentFrame).contentDocument;
         return doc.readyState === 'complete' && doc.querySelector('input[name="data[pages][1][title]_hr"]');
-      }, null, { timeout: 30000 });
+      }, CONTENT_FRAME, { timeout: 30000 });
       const field = content().locator('input[name="data[pages][1][title]_hr"]');
       await field.fill(RENAMED);
       await field.dispatchEvent('change');
       await content().locator('input[name="_savedok"]').first().click();
-      await backend.waitForFunction(title => {
-        const doc = top.content.document;
+      await backend.waitForFunction(({ contentFrame, title }) => {
+        const doc = document.querySelector(contentFrame).contentDocument;
         const hidden = doc.readyState === 'complete' && doc.querySelector('input[name="data[pages][1][title]"]');
         return hidden && hidden.value === title;
-      }, RENAMED, { timeout: 30000 });
+      }, { contentFrame: CONTENT_FRAME, title: RENAMED }, { timeout: 30000 });
       spec.assertFrontend(await frontend(), RENAMED);
     });
 
@@ -382,16 +386,16 @@ async function check(label, test) {
       // The fileadmin/ mount as PHP sees it: runtime/typo3-site.js puts the
       // document root at /var/www plus the site's URL path.
       const fileadmin = `/var/www${new URL(base).pathname}/site/fileadmin`;
-      // returnUrl is where 3.8.1 sends the browser after the upload. 3.3.0's
-      // form has no such parameter, and ignores it.
-      await backend.evaluate(target => {
-        top.content.location.href = `file_upload.php?number=2&target=${encodeURIComponent(target)}`
-          + `&returnUrl=${encodeURIComponent(`file_list.php?id=${target}/`)}`;
-      }, fileadmin);
-      await backend.waitForFunction(() => {
-        const doc = top.content.document;
+      // returnUrl is where 3.8.1 and later send the browser after the
+      // upload. 3.3.0's form has no such parameter, and ignores it.
+      await backend.evaluate(({ contentFrame, target, fileList }) => {
+        document.querySelector(contentFrame).contentWindow.location.href = `file_upload.php?number=2&target=${encodeURIComponent(target)}`
+          + `&returnUrl=${encodeURIComponent(`${fileList}?id=${target}/`)}`;
+      }, { contentFrame: CONTENT_FRAME, target: fileadmin, fileList: spec.backend.fileList });
+      await backend.waitForFunction(contentFrame => {
+        const doc = document.querySelector(contentFrame).contentDocument;
         return doc.readyState === 'complete' && doc.querySelector('input[type="file"][name="upload_1"]');
-      }, null, { timeout: 30000 });
+      }, CONTENT_FRAME, { timeout: 30000 });
       const content = backend.frame({ name: 'content' });
       await content.setInputFiles('input[name="upload_0"]', { name: UPLOAD_NAME, mimeType: 'application/octet-stream', buffer: UPLOAD_BYTES });
       await content.setInputFiles('input[name="upload_1"]', {
@@ -414,21 +418,18 @@ async function check(label, test) {
 
     await check('the shell turns the backend away from its iframe', async () => {
       const errorsBefore = pageErrors.length;
-      await page.evaluate(() => {
-        document.getElementById('site').src = 'site/typo3/alt_main.php';
-      });
+      await page.evaluate(backendPage => {
+        document.getElementById('site').src = `site/typo3/${backendPage}`;
+      }, spec.backend.page);
       await page.waitForFunction(() => /tab of its own/.test(document.getElementById('status').textContent));
       await page.waitForFunction(() => {
         const doc = document.getElementById('site').contentDocument;
         return doc && doc.readyState === 'complete' && /\/site\/$/.test(doc.location.pathname);
       });
-      // Until the shell turns it away, the frameset's frames run in the
-      // iframe, where top is the shell. 3.8.1's and 4.0.13's call a function
-      // of the backend's own top window as they load, which the shell does
-      // not have: the reason the backend gets a tab of its own. In both it
-      // is alt_menu.php's onload="top.restoreHighlightedModuleMenuItem()",
-      // which only alt_main.php defines. Only those errors are expected here.
-      const expected = /: top\.\w+ is not a function$/;
+      // Until the shell turns it away, the backend runs in the iframe, where
+      // top is the shell. spec.backend.turnedAwayErrors names the errors
+      // that throws, and why. Only those are expected here.
+      const expected = spec.backend.turnedAwayErrors;
       const thrown = pageErrors.splice(errorsBefore);
       pageErrors.push(...thrown.filter(error => !expected.test(error)));
       if (thrown.length > 0) {

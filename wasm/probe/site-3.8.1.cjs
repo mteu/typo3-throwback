@@ -2,6 +2,7 @@
 'use strict';
 
 const assert = require('assert');
+const frameset = require('./site-frameset.cjs');
 
 module.exports = {
   title: 'TYPO3 3.8.1',
@@ -15,6 +16,7 @@ module.exports = {
   },
   // The seeded page is text only.
   frontendImages: [],
+  backend: frameset,
   remoteModules: [],
   // 3.8.1's menu, with the extensions it loads by default.
   minModules: 14,

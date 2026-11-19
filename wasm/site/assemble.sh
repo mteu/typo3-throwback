@@ -12,7 +12,9 @@
 #
 # Usage: assemble.sh <repo-root> <work-root> <release>...
 # <work-root> is the one check.sh takes: php-<version>/ holds each
-# interpreter's build. The site goes to <work-root>/site. Needs sql.js in
+# interpreter's build. The site goes to <work-root>/site, or to $SITE when it
+# is set. The release files come from wasm/releases/, or from $RELEASES when
+# it is set: check.sh assembles a test site that way. Needs sql.js in
 # wasm/node_modules (npm ci). Serve the result from any static web server
 # over HTTPS or on localhost, which service workers require.
 set -euo pipefail
@@ -23,12 +25,13 @@ shift 2
 releases=("$@")
 here=$(dirname "$(realpath "$0")")
 wasm=$(dirname "$here")
-site="$work/site"
+site=${SITE:-$work/site}
 shared="$site/wasm"
+release_files=${RELEASES:-$wasm/releases}
 
 field() {
     node -e 'const r = require(process.argv[1]); process.stdout.write(String(r[process.argv[2]]))' \
-        "$wasm/releases/$1.js" "$2"
+        "$release_files/$1.js" "$2"
 }
 
 rm -rf "$site"
@@ -67,7 +70,7 @@ for release in "${releases[@]}"; do
     [[ " ${interpreters[*]} " == *" $php "* ]] || interpreters+=("$php")
     archive=$(field "$release" archive)
     (cd "$repo/$(dirname "$archive")" && sha256sum -c SHA256SUMS)
-    publish "releases/$release.js" "$wasm/releases/$release.js"
+    publish "releases/$release.js" "$release_files/$release.js"
     for input in "$archive" "$(field "$release" provisionScript)" "$(field "$release" ini)"; do
         publish "$input" "$repo/$input"
     done
@@ -100,10 +103,51 @@ done
 
 # The licenses travel with the binaries: PHP's, Zend's and PCRE's ask for
 # their notices in any binary redistribution, and so do the MIT licenses.
-# libjpeg's and FreeType's ask for a credit line in the documentation.
-# Only PHP 4.4.9 is built so far; its paragraph and texts are below.
-test "${interpreters[*]}" = 4.4.9
-licences="$work/php-4.4.9/out/licences"
+# libjpeg's and FreeType's ask for a credit line in the documentation. Each
+# interpreter the releases name gets its paragraph, and each license text its
+# build put in out/licences/ is printed once.
+php_paragraph() {
+    case $1 in
+        4.4.9) cat <<'EOF'
+
+PHP 4.4.9 (php-4.4.9/php.js, php.wasm), PHP License 3.01
+    This product includes PHP software, freely available from
+    <http://www.php.net/software/>.
+    This product includes the Zend Engine, freely available at
+    <http://www.zend.com/>.
+    It also includes PCRE, under the BSD license, and expat 1.95.6, under
+    the MIT license in expat-COPYING. It was compiled with
+    Emscripten, whose runtime and musl libc it contains (MIT and
+    University of Illinois/NCSA).
+    It includes GD 2.0.28 as bundled in PHP, under the GD license in
+    gd-README, and links these libraries, built by Emscripten's ports:
+    zlib (zlib license), libpng (libpng license), libjpeg 9f and FreeType
+    (FreeType License).
+EOF
+            ;;
+        5.6.40) cat <<'EOF'
+
+PHP 5.6.40 (php-5.6.40/php.js, php.wasm), PHP License 3.01
+    This product includes PHP software, freely available from
+    <http://www.php.net/software/>.
+    This product includes the Zend Engine, freely available at
+    <http://www.zend.com/>.
+    It also includes PCRE, under the BSD license, and links libxml2 2.9.14,
+    under the MIT license in libxml2-Copyright. It was compiled with
+    Emscripten, whose runtime and musl libc it contains (MIT and
+    University of Illinois/NCSA).
+    It includes GD 2.1 as bundled in PHP, under the GD license in
+    gd-COPYING, and links these libraries, built by Emscripten's ports:
+    zlib (zlib license), libpng (libpng license), libjpeg 9f and FreeType
+    (FreeType License).
+EOF
+            ;;
+        *)
+            echo "no license paragraph for PHP $1" >&2
+            return 1
+            ;;
+    esac
+}
 {
     echo 'This site runs third-party software. Each part keeps its own license. The'
     echo 'full texts follow.'
@@ -123,20 +167,11 @@ EOF
 
 "TYPO3" is a registered trademark of the TYPO3 Association. This site is not
 affiliated with or endorsed by it.
-
-PHP 4.4.9 (php.js, php.wasm), PHP License 3.01
-    This product includes PHP software, freely available from
-    <http://www.php.net/software/>.
-    This product includes the Zend Engine, freely available at
-    <http://www.zend.com/>.
-    It also includes PCRE, under the BSD license, and expat 1.95.6, under
-    the MIT license in expat-COPYING. It was compiled with
-    Emscripten, whose runtime and musl libc it contains (MIT and
-    University of Illinois/NCSA).
-    It includes GD 2.0.28 as bundled in PHP, under the GD license in
-    gd-README, and links these libraries, built by Emscripten's ports:
-    zlib (zlib license), libpng (libpng license), libjpeg 9f and FreeType
-    (FreeType License).
+EOF
+    for php in "${interpreters[@]}"; do
+        php_paragraph "$php"
+    done
+    cat <<'EOF'
     This software is based in part on the work of the Independent JPEG
     Group.
     Portions of this software are copyright (C) 1996-2026 The FreeType Project
@@ -148,10 +183,24 @@ sql.js 1.14.2 (sql-wasm.js, sql-wasm.wasm), MIT
 Everything else on this site comes from https://github.com/mteu/typo3-throwback
 and is under that project's MIT license, whose text comes last.
 EOF
-    for file in php-4.4.9-LICENSE zend-engine-LICENSE pcre-LICENCE expat-COPYING emscripten-LICENSE musl-COPYRIGHT \
-        gd-README zlib-LICENSE libpng-LICENSE libjpeg-README freetype-FTL.TXT; do
-        printf '\n\n===== %s =====\n\n' "$file"
-        cat "$licences/$file"
+    # Each text once. Both builds carry some of the same files, such as
+    # Emscripten's. A name whose text differs between them says whose it is.
+    declare -A printed=()
+    for php in "${interpreters[@]}"; do
+        licences="$work/php-$php/out/licences"
+        test -s "$licences/php-$php-LICENSE"
+        for path in "$licences"/*; do
+            file=$(basename "$path")
+            hash=$(sha256sum "$path" | cut -c1-64)
+            if [[ ${printed[$file]+set} ]]; then
+                [[ ${printed[$file]} == "$hash" ]] && continue
+                printf '\n\n===== %s (PHP %s) =====\n\n' "$file" "$php"
+            else
+                printf '\n\n===== %s =====\n\n' "$file"
+                printed[$file]=$hash
+            fi
+            cat "$path"
+        done
     done
     printf '\n\n===== sql.js-LICENSE =====\n\n'
     cat "$wasm/node_modules/sql.js/LICENSE"

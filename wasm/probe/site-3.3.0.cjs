@@ -3,6 +3,7 @@
 'use strict';
 
 const assert = require('assert');
+const frameset = require('./site-frameset.cjs');
 
 const SUBPAGE = 'Made in 2002';
 
@@ -17,6 +18,7 @@ module.exports = {
   // One of 3.3/Dockerfile's document root links.
   frontendImages: ['clear.gif'],
   // help_quick redirects to the 2002 online manual on typo3.org.
+  backend: frameset,
   remoteModules: ['help_quick'],
   minModules: 20,
   phpUploadRefused: /Fileextension 'php' is not allowed/,

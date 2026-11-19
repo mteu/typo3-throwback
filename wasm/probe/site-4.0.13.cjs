@@ -2,6 +2,7 @@
 'use strict';
 
 const assert = require('assert');
+const frameset = require('./site-frameset.cjs');
 
 // The job's CHARSET_PROBE, which 4.0/provision.php seeds as the root page's
 // title: ISO-8859-1 bytes and character references, which the browser
@@ -25,6 +26,7 @@ module.exports = {
   },
   // The seeded page is text only.
   frontendImages: [],
+  backend: frameset,
   remoteModules: [],
   // 4.0.13's menu, with the extensions it loads by default: two more than
   // 3.8.1's.

@@ -54,6 +54,9 @@ async function check(label, test) {
   try {
     for (const release of releases) {
       const short = release.split('.').slice(0, 2).join('.');
+      // Where the login lands, and what the backend shows there: the
+      // frameset of alt_main.php up to 4.0, backend.php from 4.5.
+      const { backend: shape } = require(`./site-${release}.cjs`);
       const context = await browser.newContext({ ignoreHTTPSErrors: true });
       await check(`${release}: the backend logs in over HTTPS, and stays on https://`, async () => {
         const page = await context.newPage();
@@ -67,13 +70,14 @@ async function check(label, test) {
         await backend.fill('input[name="username"]', 'admin');
         await backend.fill('input[name="p_field"]', 'password');
         await Promise.all([
-          backend.waitForURL(/\/alt_main\.php$/, { timeout: 30000 }).catch(() => {}),
+          backend.waitForURL(shape.landsOn, { timeout: 30000 }).catch(() => {}),
           backend.click('input[name="commandLI"]'),
         ]);
         console.log(`     ${backend.url()}`);
         // Blocked, the login leaves the visitor on index.php.
-        assert.match(backend.url(), /^https:\/\/127\.0\.0\.1:\d+\/typo3-throwback\/\d\.\d\/site\/typo3\/alt_main\.php$/);
-        await backend.waitForFunction(() => document.readyState === 'complete' && document.querySelectorAll('frame').length > 0);
+        assert.match(server.url, /^https:\/\//);
+        assert.strictEqual(backend.url(), `${server.url}/${short}/site/typo3/${shape.page}`);
+        await shape.assertLoaded(backend);
       });
       await context.close();
     }

@@ -5,6 +5,13 @@
 $failures = 0;
 $errors = array();
 
+class Probe
+{
+    public $title = "Gr\xc3\xbc\xc3\x9fe";
+    protected $uid = 7;
+    private $data = array("a\x00b", 'c');
+}
+
 function expect($label, $passed)
 {
     global $failures;
@@ -38,13 +45,11 @@ if (!@mysql_select_db('probe', $link)) {
     mysql_select_db('probe', $link);
 }
 mysql_query('DROP TABLE IF EXISTS t', $link);
-expect('CREATE TABLE with ENGINE=InnoDB', mysql_query("CREATE TABLE t (uid int(11) unsigned NOT NULL auto_increment, title varchar(40) DEFAULT '' NOT NULL, PRIMARY KEY (uid)) ENGINE=InnoDB", $link));
+expect('CREATE TABLE with ENGINE=InnoDB', mysql_query("CREATE TABLE t (uid int(11) unsigned NOT NULL auto_increment, title varchar(40) DEFAULT '' NOT NULL, data mediumtext, PRIMARY KEY (uid)) ENGINE=InnoDB", $link));
 
 expect('mysql_real_escape_string() escapes quote, backslash, double quote and NUL',
     mysql_real_escape_string("O'Reilly \\ \"quoted\" \x00 end", $link) === "O\\'Reilly \\\\ \\\"quoted\\\" \\0 end");
-// Without the NUL: the shim hands string literals to SQLite as SQL text,
-// which ends at a NUL byte.
-$tricky = "O'Reilly \\ \"quoted\" end";
+$tricky = "O'Reilly \\ \"quoted\" \x00 end";
 mysql_query("INSERT INTO t (title) VALUES ('" . mysql_real_escape_string($tricky, $link) . "')", $link);
 expect('mysql_insert_id()', mysql_insert_id($link) === 1);
 mysql_query("INSERT INTO t (title) VALUES ('second'), ('third')", $link);
@@ -53,12 +58,26 @@ expect('mysql_affected_rows() after a two-row insert', mysql_affected_rows($link
 $res = mysql_query('SELECT uid, title FROM t ORDER BY uid', $link);
 expect('mysql_num_rows() and mysql_num_fields()', mysql_num_rows($res) === 3 && mysql_num_fields($res) === 2);
 $row = mysql_fetch_assoc($res);
-expect('the escaped string round-trips byte for byte', $row['title'] === $tricky);
+$lengths = mysql_fetch_lengths($res);
+expect('the escaped string round-trips byte for byte, NUL included', $row['title'] === $tricky && $lengths[1] === strlen($tricky));
 $row = mysql_fetch_row($res);
 expect('mysql_fetch_row()', $row === array('2', 'second'));
 $row = mysql_fetch_object($res);
 expect('mysql_fetch_object()', $row->title === 'third');
 expect('mysql_field_name() and mysql_field_type()', mysql_field_name($res, 1) === 'title' && mysql_field_type($res, 0) === 'int');
+mysql_free_result($res);
+
+// serialize() writes NUL bytes around protected and private property names.
+$object = new Probe();
+$serialized = serialize($object);
+expect('serialize() writes NUL bytes for protected and private properties',
+    strpos($serialized, "s:6:\"\x00*\x00uid\"") !== false && strpos($serialized, "s:11:\"\x00Probe\x00data\"") !== false);
+mysql_query("UPDATE t SET data = '" . mysql_real_escape_string($serialized, $link) . "' WHERE uid = 2", $link);
+$res = mysql_query("SELECT data, LENGTH(data) FROM t WHERE data = '" . mysql_real_escape_string($serialized, $link) . "'", $link);
+$row = mysql_fetch_row($res);
+expect('a serialized object is stored, found by its bytes and read back whole', $row !== false && $row[0] === $serialized
+    && $row[1] === (string) strlen($serialized));
+expect('unserialize() gives back an equal object', $row !== false && unserialize($row[0]) == $object);
 mysql_free_result($res);
 
 $res = mysql_unbuffered_query('SELECT COUNT(*) FROM t', $link);

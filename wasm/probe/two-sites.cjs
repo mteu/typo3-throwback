@@ -1,7 +1,9 @@
 // Every release on one origin, as GitHub Pages serves them: /3.3/, /3.8/,
 // /4.0/ and so on of one assembled site, in one browser.
 //
-//   each release's shell runs its own PHP: the Web Lock is per release
+//   each release's shell runs its own PHP, the interpreter its release file
+//   names, so that two interpreters can run on one origin: the Web Lock is
+//   per release
 //   each keeps its own snapshot, in an IndexedDB database of its own
 //   "Reset site" in the newest provisions it afresh, and leaves every other
 //   release's tab and saved site alone
@@ -19,6 +21,7 @@ const { serveSite } = require('./static-server.cjs');
 const root = path.resolve(process.argv[2]);
 const releases = process.argv.slice(3);
 assert.ok(releases.length >= 2, 'name at least two releases');
+const phpOf = release => require(path.join(__dirname, '..', 'releases', `${release}.js`)).php;
 // The directory each release is published under: 3.8.1 at /3.8/.
 const dirOf = release => release.replace(/\.\d+$/, '');
 
@@ -88,10 +91,14 @@ const savedDatabase = (shell, release) => shell.evaluate(async name => {
     const newest = releases[releases.length - 1];
     const others = releases.slice(0, -1);
 
-    await check('each release runs its own PHP, under a Web Lock of its own', async () => {
+    const interpreters = [...new Set(releases.map(phpOf))];
+    await check(`each release runs its own PHP, under a Web Lock of its own: ${interpreters.map(php => `PHP ${php}`).join(' and ')}`, async () => {
       for (const [release, shell] of shells) {
         assert.match(await boot(shell), /Provisioned a fresh site/, release);
         assert.strictEqual(shell.workers().length, 1, release);
+        // Every release's seeded page names the PHP that rendered it.
+        const frontend = await shell.frame({ url: /\/site\// }).content();
+        assert.ok(frontend.includes(`Rendered by TypoScript on PHP ${phpOf(release)}`), `${release}'s frontend does not name PHP ${phpOf(release)}`);
       }
       const scopes = await shells.get(oldest).evaluate(async () => (await navigator.serviceWorker.getRegistrations())
         .map(registration => new URL(registration.scope).pathname).sort());

@@ -224,6 +224,22 @@ if [ "${SKIP_BROWSER:-0}" != 1 ]; then
 
     echo "== every release's backend login over HTTPS, as the public site serves it"
     node "$here/probe/https.cjs" "$work/site" "${releases[@]}"
+
+    # PHP 5.6.40 through the whole site, before a release that needs it: 3.8.1
+    # as its Docker stack runs it, on PHP 5.6.40 with 3.8/php-legacy.ini. The
+    # test release is releases/3.8.1.js with those two lines changed, in a
+    # test site of its own, so the published site is not touched.
+    echo "== PHP 5.6.40 through the whole site: TYPO3 3.8.1 on it, as its Docker stack runs it"
+    test_releases="$work/test-releases"
+    rm -rf "$test_releases"
+    mkdir -p "$test_releases"
+    sed -e "s|^    php: '4.4.9',\$|    php: '5.6.40',|" \
+        -e "s|^    ini: 'php4-base/php-legacy.ini',\$|    ini: '3.8/php-legacy.ini',|" \
+        "$here/releases/3.8.1.js" > "$test_releases/3.8.1.js"
+    test "$(RELEASES=$test_releases node -e 'const r = require(process.env.RELEASES + "/3.8.1.js"); process.stdout.write(r.php + " " + r.ini)')" \
+        = "5.6.40 3.8/php-legacy.ini"
+    RELEASES="$test_releases" SITE="$work/site-php-5.6.40" "$here/site/assemble.sh" "$repo" "$work" 3.8.1
+    RELEASES="$test_releases" node "$here/probe/site.cjs" "$work/site-php-5.6.40" 3.8.1
 fi
 
 echo "== all checks passed"

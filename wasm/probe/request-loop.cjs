@@ -29,12 +29,16 @@ const PROFILES = {
   '4.4.9': {
     ini: 'php4-base/php-legacy.ini',
     www: ['www'],
+    // The servers ext/mysql is checked against: what the releases on this
+    // PHP talk to.
+    mysqlServers: [{ serverVersion: '3.23.49' }],
     undefinedFunction: 'Call to undefined function: call_to_a_function_that_does_not_exist()',
     defaultContentType: 'text/html; charset=ISO-8859-1',
   },
   '5.6.40': {
     ini: '4.5/php-legacy.ini',
     www: ['www-5', 'www'],
+    mysqlServers: [{ serverVersion: '5.5.62', charset: 'latin1' }, { serverVersion: '5.5.62', charset: 'utf8' }],
     undefinedFunction: 'Call to undefined function call_to_a_function_that_does_not_exist()',
     defaultContentType: 'text/html; charset=UTF-8',
   },
@@ -235,6 +239,26 @@ function prepareScratch() {
     assert.strictEqual(ids.size, 500);
   });
 
+  // ext/mysql, built against native/libmysql/, with the shim answering as
+  // each server the releases on this PHP talk to. Each run stores and reads
+  // back strings with NUL bytes, as serialize() writes them.
+  const MysqlOnSqlite = require('../runtime/mysql-sqlite.js');
+  const initSqlJs = require(path.join(__dirname, '..', 'node_modules', 'sql.js'));
+  const SQL = await initSqlJs();
+  for (const server of profile.mysqlServers) {
+    const label = `MySQL ${server.serverVersion}${server.charset ? ` ${server.charset}` : ''}`;
+    const withMysql = await startPhp(`ini-mysql-${server.serverVersion}-${server.charset || 'latin1'}`, {
+      iniText: iniWith(),
+      mysql: new MysqlOnSqlite(SQL, server),
+    });
+    check(`ext/mysql against the shim as ${label}: connect, escape, NUL bytes, serialize(), fetch, errors`, () => {
+      const response = request(withMysql, 'mysql.php', { queryString: `server=${server.serverVersion}` });
+      console.log(response.text.trimEnd().split('\n').map(line => `     ${line}`).join('\n'));
+      assert.deepStrictEqual(response.log, []);
+      assert.match(response.text, /MYSQL OK\n$/);
+    });
+  }
+
   if (phpVersion === '5.6.40') {
     await php5Checks();
   }
@@ -355,22 +379,6 @@ function prepareScratch() {
       assert.strictEqual(facts.moved_md5, md5);
       assert.strictEqual(facts.tmp_left, 'no');
       assert.strictEqual(fs.readFileSync(path.join(target, 'every-byte.bin')).toString('latin1'), binary);
-    });
-
-    // ext/mysql, built against native/libmysql/, with the shim answering as
-    // the MySQL 5.5 of 4.5/compose.yaml.
-    const MysqlOnSqlite = require('../runtime/mysql-sqlite.js');
-    const initSqlJs = require(path.join(__dirname, '..', 'node_modules', 'sql.js'));
-    const serverVersion = '5.5.62';
-    const withMysql = await startPhp('ini-mysql', {
-      iniText: iniWith(),
-      mysql: new MysqlOnSqlite(await initSqlJs(), { serverVersion }),
-    });
-    check(`ext/mysql against the shim as MySQL ${serverVersion}: connect, escape, insert, fetch, errors`, () => {
-      const response = request(withMysql, 'mysql.php', { queryString: `server=${serverVersion}` });
-      console.log(response.text.trimEnd().split('\n').map(line => `     ${line}`).join('\n'));
-      assert.deepStrictEqual(response.log, []);
-      assert.match(response.text, /MYSQL OK\n$/);
     });
 
     check('a session started in one request is read in the next, through its cookie', () => {

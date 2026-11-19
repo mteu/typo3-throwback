@@ -22,7 +22,7 @@ if (!@mysql_select_db('probe')) {
     mysql_select_db('probe');
 }
 mysql_query('DROP TABLE IF EXISTS t');
-expect('CREATE TABLE in MySQL 3.23 syntax', mysql_query("CREATE TABLE t (uid int(11) unsigned DEFAULT '0' NOT NULL auto_increment, title varchar(20) DEFAULT '' NOT NULL, PRIMARY KEY (uid))"));
+expect('CREATE TABLE in MySQL 3.23 syntax', mysql_query("CREATE TABLE t (uid int(11) unsigned DEFAULT '0' NOT NULL auto_increment, title varchar(20) DEFAULT '' NOT NULL, data text, PRIMARY KEY (uid))"));
 mysql_query("INSERT INTO t (title) VALUES ('" . addslashes("O'Reilly") . "')");
 expect('mysql_insert_id', mysql_insert_id() == 1);
 mysql_query("INSERT INTO t (title) VALUES ('Gr\xfc\xdfe')");
@@ -36,6 +36,18 @@ expect('an escaped quote round-trips', $row['title'] == "O'Reilly");
 $row = mysql_fetch_row($res);
 expect('ISO-8859-1 bytes round-trip', $row[1] == "Gr\xfc\xdfe");
 expect('mysql_field_type and mysql_field_flags', mysql_field_type($res, 0) == 'int' && strstr(mysql_field_flags($res, 0), 'auto_increment'));
+
+// PHP 4 has no protected properties, but a serialized string keeps its NUL
+// bytes, as an object's does on PHP 5.
+$value = array('title' => "a\0b", 'list' => array("\0", "c\0"));
+$serialized = serialize($value);
+mysql_query("UPDATE t SET data = '" . mysql_escape_string($serialized) . "' WHERE uid = 1");
+$res = mysql_query("SELECT data, LENGTH(data) FROM t WHERE data = '" . mysql_escape_string($serialized) . "'");
+$row = mysql_fetch_row($res);
+$lengths = mysql_fetch_lengths($res);
+expect('a serialized value with NUL bytes is stored, found by its bytes and read back whole', $row !== false
+    && $row[0] === $serialized && $row[1] == strlen($serialized) && $lengths[0] == strlen($serialized));
+expect('unserialize() gives back an equal value', $row !== false && unserialize($row[0]) === $value);
 
 $bad = @mysql_query('SELECT nope FROM t');
 expect('a bad column is errno 1054', $bad === false && mysql_errno() == 1054);
