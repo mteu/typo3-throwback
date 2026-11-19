@@ -427,6 +427,6 @@ module.exports = {
   USER_AGENT, EDIT_ROOT_PAGE, md5, visibleText, check, finish, cookiesFrom, client, browser, router, runScript,
   printProvisionOutput, assertNoPhpErrors, watchRejectedStatements, checkNothingRejected, checkClock,
   checkSecondProvision, checkSourceProtection, checkRestore,
-  logIn, checkBackendLogin, checkBackendLoginOverHttps, saveTitle, checkUploads, checkUploadRestored,
+  logIn, checkBackendLogin, checkBackendLoginOverHttps, saveTitle, upload, UPLOADED, checkUploads, checkUploadRestored,
   checkInstallToolImages, checkInstallToolMail, checkFreshSessions,
 };

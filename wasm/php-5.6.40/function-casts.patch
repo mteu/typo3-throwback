@@ -1,0 +1,101 @@
+--- a/Zend/zend_generators.c
++++ b/Zend/zend_generators.c
+@@ -240,13 +240,16 @@
+ }
+ /* }}} */
+ 
+-static void copy_closure_static_var(zval **var TSRMLS_DC, int num_args, va_list args, zend_hash_key *key) /* {{{ */
++/* int, as apply_func_args_t returns, which zend_hash_apply_with_arguments()
++   calls it as: WebAssembly traps on a call through a mismatched type. */
++static int copy_closure_static_var(zval **var TSRMLS_DC, int num_args, va_list args, zend_hash_key *key) /* {{{ */
+ {
+ 	HashTable *target = va_arg(args, HashTable *);
+ 
+ 	SEPARATE_ZVAL_TO_MAKE_IS_REF(var);
+ 	Z_ADDREF_PP(var);
+ 	zend_hash_quick_update(target, key->arKey, key->nKeyLength, key->h, var, sizeof(zval *), NULL);
++	return ZEND_HASH_APPLY_KEEP;
+ }
+ /* }}} */
+ 
+--- a/Zend/zend_qsort.c
++++ b/Zend/zend_qsort.c
+@@ -118,9 +118,17 @@
+ 	}
+ }
+ 
++/* WebAssembly calls through a function pointer only with the type the function
++   was defined with. So the two-argument compare goes through a three-argument
++   adapter, as zend_qsort_r()'s extra argument, instead of being cast. */
++static int zend_qsort_compare_adapter(const void *a, const void *b TSRMLS_DC, void *compare)
++{
++	return ((compare_func_t) compare)(a, b TSRMLS_CC);
++}
++
+ ZEND_API void zend_qsort(void *base, size_t nmemb, size_t siz, compare_func_t compare TSRMLS_DC)
+ {
+-	zend_qsort_r(base, nmemb, siz, (compare_r_func_t)compare, NULL TSRMLS_CC);
++	zend_qsort_r(base, nmemb, siz, zend_qsort_compare_adapter, (void *) compare TSRMLS_CC);
+ }
+ 
+ /* 
+--- a/ext/libxml/libxml.c
++++ b/ext/libxml/libxml.c
+@@ -463,11 +463,12 @@
+ 	return(ret);
+ }
+ 
+-static int _php_libxml_free_error(xmlErrorPtr error)
++/* void, as llist_dtor_func_t returns, which zend_llist_destroy() calls it
++   as: WebAssembly traps on a call through a mismatched type. */
++static void _php_libxml_free_error(xmlErrorPtr error)
+ {
+ 	/* This will free the libxml alloc'd memory */
+ 	xmlResetError(error);
+-	return 1;
+ }
+ 
+ static void _php_list_set_error_structure(xmlErrorPtr error, const char *msg)
+--- a/main/streams/cast.c
++++ b/main/streams/cast.c
+@@ -110,7 +110,9 @@
+ }
+ 
+ # ifdef COOKIE_SEEKER_USES_OFF64_T
+-static int stream_cookie_seeker(void *cookie, __off64_t *position, int whence)
++/* musl, Emscripten's libc, passes the position by pointer, as glibc does, but
++   as an off_t: it has no __off64_t. Its off_t is 64 bits. */
++static int stream_cookie_seeker(void *cookie, off_t *position, int whence)
+ {
+ 	TSRMLS_FETCH();
+ 
+--- a/ext/gd/libgd/gd_jpeg.c
++++ b/ext/gd/libgd/gd_jpeg.c
+@@ -46,7 +46,9 @@
+ 	int ignore_warning;
+ } jmpbuf_wrapper;
+ 
+-static long php_jpeg_emit_message(j_common_ptr jpeg_info, int level)
++/* void, as libjpeg's emit_message is declared and called: WebAssembly traps
++   on a call through a function pointer of another type. */
++static void php_jpeg_emit_message(j_common_ptr jpeg_info, int level)
+ {
+ 	char message[JMSG_LENGTH_MAX];
+ 	jmpbuf_wrapper *jmpbufw;
+@@ -76,7 +78,6 @@
+ 			php_gd_error_ex(E_NOTICE, "gd-jpeg, libjpeg: strace message: %s\n", message);
+ 		}
+ 	}
+-	return 1;
+ }
+ 
+ 
+@@ -340,7 +341,7 @@
+ 	cinfo.err = jpeg_std_error (&jerr);
+ 	cinfo.client_data = &jmpbufw;
+ 
+-	cinfo.err->emit_message = (void (*)(j_common_ptr,int)) php_jpeg_emit_message;
++	cinfo.err->emit_message = php_jpeg_emit_message;
+ 
+ 	if (setjmp (jmpbufw.jmpbuf) != 0) {
+ 		/* we're here courtesy of longjmp */

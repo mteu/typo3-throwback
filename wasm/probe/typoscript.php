@@ -1,7 +1,6 @@
 <?php
 // Runs unmodified TYPO3 core classes. Argument 1: the root of an unpacked
-// typo3_src-3.3.0, typo3_src-3.8.1 or typo3_src-4.0.13 tree. All keep t3lib/ at
-// the top.
+// typo3_src tree, which keeps t3lib/ at the top.
 
 define('PATH_t3lib', $argv[1] . '/t3lib/');
 include_once(PATH_t3lib . 'class.t3lib_div.php');

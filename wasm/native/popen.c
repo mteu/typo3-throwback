@@ -1,6 +1,6 @@
 /*
- * popen() for PHP 4 under Emscripten: the one program the build can run is
- * /bin/true.
+ * popen() for PHP 4.4.9 and PHP 5.6.40 under Emscripten: the one program the
+ * build can run is /bin/true.
  *
  * Every Docker stack here sets sendmail_path = /bin/true, so PHP's mail()
  * pipes each message into a program that reads nothing and exits 0: mail()

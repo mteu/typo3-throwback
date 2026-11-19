@@ -12,9 +12,16 @@ Frozen upstream source archives and the release metadata that attests them.
 | `typo3-4.5.40/` | 4.5.40 — final 4.5 LTS release                          | 2015-02-19 | 20.7 MB | sha1 + md5, both matched; fetched from SourceForge, see its `PROVENANCE.md` |
 | `typo3-6.2.31/` | 6.2.31 — last public 6.2 LTS release                    | 2017-04-18 | 21.0 MB | sha1 + md5, both matched; fetched from SourceForge, see its `PROVENANCE.md` |
 | `php-4.4.9/`    | PHP 4.4.9 — final PHP 4 release                         | 2008-08-07 | 5.6 MB  | md5, matched                                                                |
+| `php-5.6.40/`   | PHP 5.6.40 — final PHP 5 release                        | 2019-01-10 | 19.3 MB | sha256, matched                                                             |
+| `libxml2-2.9.14/` | libxml2 2.9.14 — final 2.9 release                    | 2022-05-02 | 3.1 MB  | sha256, matched; GNOME's published `.sha256sum` kept beside it              |
 
-`php-4.4.9/` is the one entry that is not a TYPO3 release. It is here because
-`php4-base/` compiles it into the only PHP 4 runtime in this repository.
+`php-4.4.9/`, `php-5.6.40/` and `libxml2-2.9.14/` are the entries that are not
+TYPO3 releases.
+`php-4.4.9/` is here because `php4-base/` compiles it into the only PHP 4
+runtime in this repository, and `wasm/php-4.4.9/build.sh` compiles it to
+WebAssembly. `php-5.6.40/` is here because `wasm/php-5.6.40/build.sh`
+compiles it to WebAssembly, and `libxml2-2.9.14/` because the same script
+compiles it for PHP 5.6's XML extensions: PHP 5.6 bundles no XML parser.
 Fetching it from `museum.php.net` at build time would make a 2008 end-of-life
 archive on a single unmirrored host a hard dependency of the build. An archive the
 build cannot proceed without belongs under the same guarantee as the sources it
@@ -81,6 +88,8 @@ Every archive here is reproducible from upstream:
 ```sh
 curl -L -o typo3_src-<version>.tar.gz https://get.typo3.org/<version>
 curl -L -o php-4.4.9.tar.gz https://museum.php.net/php4/php-4.4.9.tar.gz
+curl -L -o php-5.6.40.tar.gz https://www.php.net/distributions/php-5.6.40.tar.gz
+curl -L -o libxml2-2.9.14.tar.xz https://download.gnome.org/sources/libxml2/2.9/libxml2-2.9.14.tar.xz
 ```
 
 Checksums to verify against are in each `PROVENANCE.md` and in the feed snapshot.
@@ -104,8 +113,31 @@ for s in d['4.4.9']['source']:
 "
 ```
 
+## `php.net-releases-v5-2026-11-17.json`
+
+The same for `php-5.6.40/`: a verbatim copy of php.net's release feed for the
+PHP 5 line, retrieved 2026-11-17, covering 186 releases. It is the authority
+behind the published SHA-256 quoted in `php-5.6.40/PROVENANCE.md`.
+
+| Field      | Value                                                                |
+|------------|----------------------------------------------------------------------|
+| Source URL | https://www.php.net/releases/index.php?json&version=5&max=1000       |
+| Retrieved  | 2026-11-17                                                           |
+| Size       | 101,132 bytes                                                        |
+| SHA-256    | `e2cd3faf1a809cd720bb4f7b1104beba82c25aa5b17dab2baa76d8e4d3a41e00`   |
+
+```sh
+python3 -c "
+import json
+d = json.load(open('vendor-src/php.net-releases-v5-2026-11-17.json'))
+for s in d['5.6.40']['source']:
+    print(s['filename'], s['sha256'])
+"
+```
+
 ## Security
 
-These are 2002 to 2017 codebases with unpatched remote code execution issues.
-They exist here to be compiled and run inside a network-isolated container, never
-to be served. See the compose file in each version's directory.
+These are 2002 to 2019 codebases with unpatched remote code execution issues.
+They exist here to be compiled and run inside a network-isolated container, or
+compiled to WebAssembly and run inside a browser tab, never to be served from a
+server. See the compose file in each version's directory, and `wasm/`.

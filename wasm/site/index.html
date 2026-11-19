@@ -247,11 +247,12 @@ const WORKER = '../wasm/php-worker.js';
   const open = path => {
     frame.src = `site/${path}`;
   };
-  // The backend is a frameset that takes itself for the top window: its
-  // frames call top.goToModule(), top.content, top.TS and more, in 39 files
-  // of 3.3.0 and 17 of 3.8.1. In the iframe, top is this page, so the
-  // backend gets a window of its own. A shell has to stay open, because the
-  // leader's worker runs PHP.
+  // The backend takes itself for the top window. Up to 4.0 it is a frameset
+  // whose frames call top.goToModule(), top.content, top.TS and more, in 39
+  // files of 3.3.0 and 17 of 3.8.1. From 4.5 it is one ExtJS document whose
+  // scripts read top.TYPO3 and top.TS. In the iframe, top is this page, so
+  // the backend gets a window of its own. A shell has to stay open, because
+  // the leader's worker runs PHP.
   const backendPath = /\/site\/typo3\/(?!install\/)/;
   const openOwnTab = path => {
     window.open(`site/${path}`, 'typo3-backend');

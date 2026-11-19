@@ -5,14 +5,40 @@
 //   3.23.49  the default, what TYPO3 3.3.0 and 3.8.1 talk to. It has no
 //            character_set_* variables and no information_schema: both came
 //            later, and each is refused with the error 3.23 sends. HEX() is
-//            CONV(N,10,16), so it reads a string as a number.
-//   5.5.62   what the 4.0.13 Docker stack runs. On top of 3.23's statements,
-//            it answers the subset 4.0/provision.php reads:
-//            @@character_set_server, @@character_set_connection and
-//            @@character_set_database, all latin1;
+//            CONV(N,10,16), so it reads a string as a number. Every SET
+//            statement is accepted and changes nothing.
+//   5.5.62   what the 4.0.13 and 4.5.40 Docker stacks run. On top of 3.23's
+//            statements, it answers:
+//            the @@character_set_* and @@collation_* variables, the
+//            connection's after SET NAMES or SET CHARACTER SET, and
+//            @@sql_mode, also as @@SESSION.name, @@LOCAL.name and
+//            @@GLOBAL.name;
 //            information_schema.COLUMNS, built from each table's MySQL
-//            definition; and HEX() of a string's bytes, as since MySQL 4.0.1.
+//            definition; HEX() of a string's bytes, as since MySQL 4.0.1;
+//            SHOW CHARACTER SET, and SHOW TABLE STATUS, SHOW KEYS and SHOW
+//            CREATE TABLE with MySQL 5.5's columns, and with the ENGINE and
+//            DEFAULT CHARSET each table was created with.
 //            Everything else answers as it does for 3.23.
+//
+// A 5.5.62 server has a character set too, which the release file names
+// beside the version, as the stack's --character-set-server does:
+//
+//   latin1   the default, what the 4.0.13 stack runs, collation
+//            latin1_swedish_ci. Characters are bytes.
+//   utf8     what the 4.5.40 stack runs, collation utf8_general_ci. Where
+//            MySQL counts or compares characters, the shim reads the bytes
+//            as UTF-8: varchar(n) and char(n) keep n characters,
+//            CHAR_LENGTH() counts characters while LENGTH() counts bytes,
+//            LOWER() and UPPER() change non-ASCII letters, and =, LIKE and
+//            ORDER BY ignore case and accents, so "Gödöllő" equals "GODOLLO".
+//            sql.js cannot add a collation to SQLite, so = and ORDER BY get
+//            this through MYSQL_COLLATE_KEY(), which the translation adds:
+//            = only between a column and a non-ASCII string, since SQLite
+//            already compares ASCII without case. GROUP BY, DISTINCT and
+//            other comparisons ignore the case of ASCII letters only.
+//
+// Neither converts: bytes go in and come out as the client sent them,
+// whatever SET NAMES said, as when client and server agree on the charset.
 //
 // It answers what TYPO3 and its install tooling send, not every MySQL
 // statement. SQL is tokenized with MySQL's rules (backslash escapes, both
@@ -23,15 +49,22 @@
 // NULL column is its default, varchar(n) truncates, and 0 or NULL into an
 // auto_increment column takes the next id.
 //
-// Strings are ISO-8859-1 throughout: one JS char per byte, as PHP 4 sends them.
+// Strings are kept as bytes throughout: one JS char per byte, as PHP sends
+// them. sql.js ends SQLite text at a NUL byte, in SQL, in bound values and in
+// what it reads back, so a string with one, such as PHP's serialize() writes
+// for a protected property, goes to SQLite as a BLOB of its bytes. It comes
+// back byte for byte. LENGTH() counts its bytes, CHAR_LENGTH() its
+// characters, LIKE matches it as any string, and = compares its bytes, with
+// case. ORDER BY puts it after every string without a NUL byte.
 //
 // Every error it raises is one MySQL raises for the same statement, with
 // MySQL's number. A statement it cannot translate fails in SQLite instead,
 // as error 1105 with SQLite's message. The stack probes,
 // probe/stack-<release>.cjs, record every statement answered with an error
-// and fail on any. For TYPO3 3.3.0, 3.8.1 and 4.0.13 there are none, over
-// what those probes reach: provisioning, the frontend, the backend login, record
-// editing, uploads and the Install Tool. Beyond that, probe/mysql-sqlite.cjs
+// and fail on any. For TYPO3 3.3.0, 3.8.1, 4.0.13 and 4.5.40 there are none,
+// over what those probes reach: provisioning, the frontend, the backend
+// login, record editing, uploads and the Install Tool, and 4.5.40's page tree
+// over Ext.Direct. Beyond that, probe/mysql-sqlite.cjs
 // covers the ALTER TABLE forms the Install Tool's database compare sends.
 // Other statements are untested.
 'use strict';
@@ -314,7 +347,21 @@
   // SQLite output
 
   function quoteString(value) {
-    return `'${String(value).replace(/'/g, "''")}'`;
+    const text = String(value);
+    if (text.includes('\0')) {
+      let hex = '';
+      for (let i = 0; i < text.length; i++) {
+        hex += (text.charCodeAt(i) & 0xff).toString(16).padStart(2, '0');
+      }
+      return `X'${hex}'`;
+    }
+    return `'${text.replace(/'/g, "''")}'`;
+  }
+
+  // A value to bind or to return from a function: a string with a NUL byte as
+  // a BLOB of its bytes, anything else as it is.
+  function sqliteValue(value) {
+    return typeof value === 'string' && value.includes('\0') ? bytesOfText(value) : value;
   }
 
   function quoteIdent(name) {
@@ -377,6 +424,154 @@
         || (token.type === 'op' && token.value === '(' && previous.type === 'word'));
       out += (out && !tight ? ' ' : '') + text;
     }
+    return out;
+  }
+
+  // ---------------------------------------------------------------------
+  // utf8_general_ci where SQLite has no collation for it
+
+  const COLLATE_KEY = 'MYSQL_COLLATE_KEY';
+  const ORDER_BY_END = ['LIMIT', 'PROCEDURE', 'INTO', 'FOR', 'LOCK', 'UNION'];
+  const CONDITION_START = ['WHERE', 'HAVING', 'ON'];
+  const CONDITION_END = ['SET', 'ORDER', 'GROUP', 'LIMIT', 'VALUES', 'SELECT', 'FROM', 'UNION'];
+  const BEFORE_OPERAND = ['AND', 'OR', 'XOR', 'NOT', 'WHERE', 'HAVING', 'ON', 'WHEN', 'THEN', 'ELSE'];
+  const AFTER_OPERAND = ['AND', 'OR', 'XOR', 'ORDER', 'GROUP', 'LIMIT', 'HAVING', 'THEN', 'ELSE', 'END', 'WHEN', 'UNION'];
+  const COMPARISONS = ['=', '<>', '!=', '<=>'];
+
+  // MYSQL_COLLATE_KEY( tokens ), spanning the tokens' own text, so a result
+  // column keeps the name MySQL gives it.
+  function wrapInCollateKey(tokens) {
+    const first = tokens[0];
+    const last = tokens[tokens.length - 1];
+    return [
+      { type: 'word', value: COLLATE_KEY, upper: COLLATE_KEY, start: first.start, end: first.start },
+      { type: 'op', value: '(', start: first.start, end: first.start },
+      ...tokens,
+      { type: 'op', value: ')', start: last.end, end: last.end },
+    ];
+  }
+
+  // Each ORDER BY term, but a column number, sorts by its key.
+  function collateOrderBy(tokens) {
+    const out = [];
+    const flush = term => {
+      let end = term.length;
+      if (end && term[end - 1].type === 'word' && (term[end - 1].upper === 'ASC' || term[end - 1].upper === 'DESC')) {
+        end--;
+      }
+      const expression = term.slice(0, end);
+      if (!expression.length || (expression.length === 1 && expression[0].type === 'number')) {
+        out.push(...term);
+      } else {
+        out.push(...wrapInCollateKey(expression), ...term.slice(end));
+      }
+    };
+    let i = 0;
+    while (i < tokens.length) {
+      const token = tokens[i++];
+      out.push(token);
+      if (!(token.type === 'word' && token.upper === 'ORDER' && tokens[i] && tokens[i].upper === 'BY')) {
+        continue;
+      }
+      out.push(tokens[i++]);
+      let depth = 0;
+      let term = [];
+      while (i < tokens.length) {
+        const next = tokens[i];
+        if (next.type === 'op' && next.value === ')' && depth === 0) {
+          break;
+        }
+        if (depth === 0 && next.type === 'word' && ORDER_BY_END.includes(next.upper)) {
+          break;
+        }
+        if (next.type === 'op' && next.value === '(') {
+          depth++;
+        } else if (next.type === 'op' && next.value === ')') {
+          depth--;
+        }
+        i++;
+        if (depth === 0 && next.type === 'op' && next.value === ',') {
+          flush(term);
+          out.push(next);
+          term = [];
+        } else {
+          term.push(next);
+        }
+      }
+      flush(term);
+    }
+    return out;
+  }
+
+  // A column compared with a string that is not ASCII: both sides by key,
+  // in WHERE, HAVING and ON. ASCII needs nothing, as SQLite's NOCASE
+  // already ignores its case.
+  function collateComparisons(tokens) {
+    const isWord = (token, words) => token && token.type === 'word' && words.includes(token.upper);
+    const isOp = (token, ops) => token && token.type === 'op' && ops.includes(token.value);
+    const startsOperand = i => i < 0 || isOp(tokens[i], ['(', ',']) || isWord(tokens[i], BEFORE_OPERAND);
+    const endsOperand = i => i >= tokens.length || isOp(tokens[i], [')', ',']) || isWord(tokens[i], AFTER_OPERAND);
+    const nonAscii = token => token && token.type === 'string' && /[\u0080-\u00ff]/.test(token.value);
+    // [first, last] of the column reference ending at i, or null.
+    const referenceEndingAt = i => {
+      if (!isNameToken(tokens[i])) {
+        return null;
+      }
+      let first = i;
+      while (isOp(tokens[first - 1], ['.']) && isNameToken(tokens[first - 2])) {
+        first -= 2;
+      }
+      return startsOperand(first - 1) ? [first, i] : null;
+    };
+    const referenceStartingAt = i => {
+      if (!isNameToken(tokens[i]) || isOp(tokens[i + 1], ['('])) {
+        return null;
+      }
+      let last = i;
+      while (isOp(tokens[last + 1], ['.']) && isNameToken(tokens[last + 2])) {
+        last += 2;
+      }
+      return endsOperand(last + 1) ? [i, last] : null;
+    };
+
+    const ranges = [];
+    const conditions = [];
+    let inCondition = false;
+    for (let i = 0; i < tokens.length; i++) {
+      const token = tokens[i];
+      if (isOp(token, ['('])) {
+        conditions.push(inCondition);
+      } else if (isOp(token, [')'])) {
+        inCondition = conditions.length ? conditions.pop() : false;
+      } else if (isWord(token, CONDITION_START)) {
+        inCondition = !(token.upper === 'ON' && isWord(tokens[i + 1], ['DUPLICATE']));
+      } else if (isWord(token, CONDITION_END)) {
+        inCondition = false;
+      } else if (inCondition && isOp(token, COMPARISONS)) {
+        let reference = null;
+        if (nonAscii(tokens[i + 1]) && endsOperand(i + 2)) {
+          reference = referenceEndingAt(i - 1);
+          if (reference) {
+            ranges.push(reference, [i + 1, i + 1]);
+          }
+        } else if (nonAscii(tokens[i - 1]) && startsOperand(i - 2)) {
+          reference = referenceStartingAt(i + 1);
+          if (reference) {
+            ranges.push([i - 1, i - 1], reference);
+          }
+        }
+      }
+    }
+    if (!ranges.length) {
+      return tokens;
+    }
+    const out = [];
+    let at = 0;
+    for (const [first, last] of ranges.sort((a, b) => a[0] - b[0])) {
+      out.push(...tokens.slice(at, first), ...wrapInCollateKey(tokens.slice(first, last + 1)));
+      at = last + 1;
+    }
+    out.push(...tokens.slice(at));
     return out;
   }
 
@@ -577,6 +772,11 @@
     const limit = column.base === 'CHAR' || column.base === 'VARCHAR' ? column.length : TEXT_TYPES[column.base];
     if (column.base === 'ENUM') {
       return column.values.includes(text) ? text : '';
+    }
+    // A utf8 char(n) or varchar(n) holds n characters; text and blob limits
+    // are bytes in every charset.
+    if (column.charset === 'utf8' && (column.base === 'CHAR' || column.base === 'VARCHAR')) {
+      return utf8Length(text) > limit ? utf8Prefix(text, limit) : text;
     }
     return limit !== undefined && limit !== null && text.length > limit ? text.slice(0, limit) : text;
   }
@@ -797,21 +997,31 @@
     return Number(String(serverVersion).split('.')[0]);
   }
 
-  // [name, value] as SHOW VARIABLES lists them and SELECT @@name reads them.
-  // Only the variables something here reads: SHOW VARIABLES is not a full
-  // list for either version.
-  function serverVariables(serverVersion) {
+  // [name, value] as SHOW VARIABLES lists them and SELECT @@name reads them,
+  // for a link, whose SET NAMES changes the client's three. Only the
+  // variables something here reads: SHOW VARIABLES is not a full list for
+  // either version.
+  function serverVariables(serverVersion, charset = 'latin1', link = null) {
     if (majorVersion(serverVersion) < 5) {
       return [['version', serverVersion], ['character_set', 'latin1'], ['sql_mode', '0']];
     }
-    // The 4.0 Docker stack's server runs latin1 (4.0/compose.yaml), with an
-    // empty sql_mode, mysql:5.5's own default.
+    // Each stack's server runs with --character-set-server and an empty
+    // sql_mode, mysql:5.5's own default. A connection starts in the server's
+    // charset. The database's is the server's: CREATE DATABASE here takes
+    // no charset of its own.
+    const connection = (link && link.characterSets) || { client: charset, connection: charset, results: charset };
     return [
-      ['version', serverVersion],
-      ['character_set_server', 'latin1'],
-      ['character_set_connection', 'latin1'],
-      ['character_set_database', 'latin1'],
+      ['character_set_client', connection.client],
+      ['character_set_connection', connection.connection],
+      ['character_set_database', charset],
+      ['character_set_results', connection.results],
+      ['character_set_server', charset],
+      ['character_set_system', 'utf8'],
+      ['collation_connection', collationOf(connection.connection, false)],
+      ['collation_database', collationOf(charset, false)],
+      ['collation_server', collationOf(charset, false)],
       ['sql_mode', ''],
+      ['version', serverVersion],
     ];
   }
 
@@ -859,6 +1069,159 @@
   }
 
   // ---------------------------------------------------------------------
+  // Character sets
+
+  // The character sets a 5.5.62 server can be given, as SHOW CHARACTER SET
+  // lists them.
+  const CHARSETS = {
+    latin1: { description: 'cp1252 West European', collation: 'latin1_swedish_ci', maxlen: 1 },
+    utf8: { description: 'UTF-8 Unicode', collation: 'utf8_general_ci', maxlen: 3 },
+  };
+  const ER_UNKNOWN_CHARACTER_SET = 1115;
+
+  function collationOf(charset, binary) {
+    return binary ? `${charset}_bin` : CHARSETS[charset].collation;
+  }
+
+  function knownCharset(name) {
+    const charset = String(name).toLowerCase();
+    if (!Object.prototype.hasOwnProperty.call(CHARSETS, charset)) {
+      throw new MysqlError(ER_UNKNOWN_CHARACTER_SET, `Unknown character set: '${name}'`);
+    }
+    return charset;
+  }
+
+  function bytesOfText(text) {
+    const bytes = new Uint8Array(text.length);
+    for (let i = 0; i < text.length; i++) {
+      bytes[i] = text.charCodeAt(i) & 0xff;
+    }
+    return bytes;
+  }
+
+  const utf8Decoder = new TextDecoder('utf-8');
+  const utf8Encoder = new TextEncoder();
+
+  function decodeUtf8(text) {
+    return utf8Decoder.decode(bytesOfText(text));
+  }
+
+  function encodeUtf8(text) {
+    return latin1FromBytes(utf8Encoder.encode(text));
+  }
+
+  // A UTF-8 byte that does not continue a sequence starts a character.
+  function startsCharacter(code) {
+    return (code & 0xc0) !== 0x80;
+  }
+
+  function utf8Length(text) {
+    let count = 0;
+    for (let i = 0; i < text.length; i++) {
+      if (startsCharacter(text.charCodeAt(i))) {
+        count++;
+      }
+    }
+    return count;
+  }
+
+  // The first count characters, cut before a character's first byte.
+  function utf8Prefix(text, count) {
+    let seen = 0;
+    for (let i = 0; i < text.length; i++) {
+      if (startsCharacter(text.charCodeAt(i))) {
+        if (seen === count) {
+          return text.slice(0, i);
+        }
+        seen++;
+      }
+    }
+    return text;
+  }
+
+  // utf8_general_ci compares one weight per character: the upper case of its
+  // base letter, so "ö", "Ö", "ő" and "o" weigh the same, and "ß" weighs "S".
+  function generalCiWeight(char) {
+    if (char === '\u00df') {
+      return 'S';
+    }
+    const base = char.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    const upper = (base.length === 1 ? base : char).toUpperCase();
+    return upper.length === 1 ? upper : char;
+  }
+
+  // A string's utf8_general_ci weights, as UTF-8 bytes: SQLite compares
+  // them in code point order, which is the order MySQL sorts weights in.
+  function utf8GeneralCiKey(text) {
+    let key = '';
+    for (const char of decodeUtf8(text)) {
+      key += generalCiWeight(char);
+    }
+    return encodeUtf8(key);
+  }
+
+  function escapeRegExp(text) {
+    return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  }
+
+  // MySQL's LIKE under utf8_general_ci: % and _ match characters, and
+  // letters match by weight.
+  function utf8Like(pattern, subject, escape) {
+    const escapeChar = escape === undefined ? null : decodeUtf8(escape);
+    const chars = Array.from(decodeUtf8(pattern));
+    let regex = '';
+    for (let i = 0; i < chars.length; i++) {
+      const char = chars[i];
+      if (char === escapeChar && i + 1 < chars.length) {
+        regex += escapeRegExp(generalCiWeight(chars[++i]));
+      } else if (char === '%') {
+        regex += '[\\s\\S]*';
+      } else if (char === '_') {
+        regex += '[\\s\\S]';
+      } else {
+        regex += escapeRegExp(generalCiWeight(char));
+      }
+    }
+    const weights = Array.from(decodeUtf8(subject), generalCiWeight).join('');
+    return new RegExp(`^${regex}$`, 'u').test(weights);
+  }
+
+  // SQLite's own LIKE, as latin1 servers have it, over every byte: % and _
+  // match characters, and ASCII letters match without case.
+  function foldAscii(text) {
+    return text.replace(/[A-Z]/g, letter => letter.toLowerCase());
+  }
+
+  function asciiCiLikeRegExp(pattern, escape) {
+    const chars = foldAscii(pattern);
+    const escapeChar = escape === undefined ? null : foldAscii(escape);
+    let regex = '';
+    for (let i = 0; i < chars.length; i++) {
+      const char = chars[i];
+      if (char === escapeChar && i + 1 < chars.length) {
+        regex += escapeRegExp(chars[++i]);
+      } else if (char === '%') {
+        regex += '[\\s\\S]*';
+      } else if (char === '_') {
+        regex += '[\\s\\S]';
+      } else {
+        regex += escapeRegExp(char);
+      }
+    }
+    return new RegExp(`^${regex}$`);
+  }
+
+  // SQLite calls LIKE once per row with the same pattern, so the last
+  // pattern's expression is kept.
+  let lastAsciiCiLike = { pattern: null, escape: null, regex: null };
+  function asciiCiLike(pattern, subject, escape) {
+    if (lastAsciiCiLike.pattern !== pattern || lastAsciiCiLike.escape !== escape) {
+      lastAsciiCiLike = { pattern, escape, regex: asciiCiLikeRegExp(pattern, escape) };
+    }
+    return lastAsciiCiLike.regex.test(foldAscii(subject));
+  }
+
+  // ---------------------------------------------------------------------
   // MySQL functions SQLite lacks
 
   function twoDigits(n) {
@@ -896,18 +1259,23 @@
     return func;
   }
 
-  function registerFunctions(db, now, serverVersion) {
+  function registerFunctions(db, now, serverVersion, charset = 'latin1') {
     const anyNull = args => args.some(arg => arg === null);
     const text = value => (value instanceof Uint8Array ? latin1FromBytes(value) : String(value));
+    const comparable = value => (value instanceof Uint8Array ? latin1FromBytes(value) : value);
+    const utf8 = charset === 'utf8';
+    const lower = utf8 ? value => encodeUtf8(decodeUtf8(text(value)).toLowerCase()) : value => text(value).toLowerCase();
+    const upper = utf8 ? value => encodeUtf8(decodeUtf8(text(value)).toUpperCase()) : value => text(value).toUpperCase();
+    const charLength = utf8 ? value => utf8Length(text(value)) : value => text(value).length;
     const hex = majorVersion(serverVersion) < 5 ? (value => hexAsMysql323(text(value))) : (value => hexAsMysql5(value, text(value)));
     db.create_function('HEX', value => (value === null ? null : hex(value)));
     db.create_function('MYSQL_CONCAT', variadic(function () {
       const args = Array.from(arguments);
-      return anyNull(args) ? null : args.map(text).join('');
+      return anyNull(args) ? null : sqliteValue(args.map(text).join(''));
     }));
     db.create_function('MYSQL_CONCAT_WS', variadic(function () {
       const [separator, ...args] = Array.from(arguments);
-      return separator === null ? null : args.filter(arg => arg !== null).map(text).join(text(separator));
+      return separator === null ? null : sqliteValue(args.filter(arg => arg !== null).map(text).join(text(separator)));
     }));
     db.create_function('NOW', () => formatDateTime(new Date(now())));
     db.create_function('SYSDATE', () => formatDateTime(new Date(now())));
@@ -922,12 +1290,15 @@
     }));
     db.create_function('FROM_UNIXTIME', value => (value === null ? null : formatDateTime(new Date(value * 1000))));
     db.create_function('RAND', () => Math.random());
-    db.create_function('LCASE', value => (value === null ? null : text(value).toLowerCase()));
-    db.create_function('UCASE', value => (value === null ? null : text(value).toUpperCase()));
-    db.create_function('LEFT', (value, length) => (value === null || length === null ? null : text(value).slice(0, Math.max(0, length))));
-    db.create_function('RIGHT', (value, length) => (value === null || length === null ? null : (length > 0 ? text(value).slice(-length) : '')));
-    db.create_function('MID', (value, position, length) => (value === null ? null : text(value).substr(position - 1, length)));
-    db.create_function('CHAR_LENGTH', value => (value === null ? null : text(value).length));
+    db.create_function('LCASE', value => (value === null ? null : sqliteValue(lower(value))));
+    db.create_function('UCASE', value => (value === null ? null : sqliteValue(upper(value))));
+    db.create_function('LEFT', (value, length) => (value === null || length === null ? null
+      : sqliteValue(text(value).slice(0, Math.max(0, length)))));
+    db.create_function('RIGHT', (value, length) => (value === null || length === null ? null
+      : sqliteValue(length > 0 ? text(value).slice(-length) : '')));
+    db.create_function('MID', (value, position, length) => (value === null ? null
+      : sqliteValue(text(value).substr(position - 1, length))));
+    db.create_function('CHAR_LENGTH', value => (value === null ? null : charLength(value)));
     db.create_function('LOCATE', variadic(function () {
       const [needle, haystack, start = 1] = Array.from(arguments);
       return needle === null || haystack === null ? null : text(haystack).indexOf(text(needle), start - 1) + 1;
@@ -940,16 +1311,33 @@
     });
     db.create_function('GREATEST', variadic(function () {
       const args = Array.from(arguments);
-      return anyNull(args) ? null : args.reduce((a, b) => (b > a ? b : a));
+      return anyNull(args) ? null : sqliteValue(args.map(comparable).reduce((a, b) => (b > a ? b : a)));
     }));
     db.create_function('LEAST', variadic(function () {
       const args = Array.from(arguments);
-      return anyNull(args) ? null : args.reduce((a, b) => (b < a ? b : a));
+      return anyNull(args) ? null : sqliteValue(args.map(comparable).reduce((a, b) => (b < a ? b : a)));
     }));
     db.create_function('PASSWORD', value => (value === null ? null : oldPassword(text(value))));
     // SQLite calls regexp(pattern, subject) for "subject REGEXP pattern".
     db.create_function('REGEXP', (pattern, subject) => (pattern === null || subject === null ? null
       : (new RegExp(text(pattern), 'i').test(text(subject)) ? 1 : 0)));
+    // SQLite's own LIKE stops at a NUL byte, and under utf8 knows ASCII only.
+    // sql.js keeps one function per name, so LIKE's two forms go by two
+    // spellings.
+    const like = utf8 ? utf8Like : asciiCiLike;
+    db.create_function('like', (pattern, subject) => (pattern === null || subject === null ? null
+      : (like(text(pattern), text(subject)) ? 1 : 0)));
+    db.create_function('LIKE', (pattern, subject, escape) => (pattern === null || subject === null ? null
+      : (like(text(pattern), text(subject), escape === null ? undefined : text(escape)) ? 1 : 0)));
+    if (!utf8) {
+      return;
+    }
+    // SQLite's own LOWER() and UPPER() know ASCII only.
+    db.create_function('CHARACTER_LENGTH', value => (value === null ? null : charLength(value)));
+    db.create_function('LOWER', value => (value === null ? null : sqliteValue(lower(value))));
+    db.create_function('UPPER', value => (value === null ? null : sqliteValue(upper(value))));
+    db.create_function(COLLATE_KEY, value => (typeof value === 'string' || value instanceof Uint8Array
+      ? sqliteValue(utf8GeneralCiKey(text(value))) : value));
   }
 
   function likePattern(pattern) {
@@ -977,12 +1365,20 @@
     //   users: { name: password } to check logins; omitted, any login works
     //   now: () => milliseconds, the clock behind NOW() and UNIX_TIMESTAMP()
     //   serverVersion: '3.23.49' or '5.5.62', see the top of this file
-    constructor(SQL, { serverVersion = '3.23.49', users = null, now = () => Date.now() } = {}) {
+    //   charset: 'latin1' or 'utf8', 5.5.62's --character-set-server
+    constructor(SQL, { serverVersion = '3.23.49', charset = 'latin1', users = null, now = () => Date.now() } = {}) {
       if (!SERVER_VERSIONS.includes(serverVersion)) {
         throw new Error(`MySQL ${serverVersion} is not imitated, only ${SERVER_VERSIONS.join(' and ')}`);
       }
+      if (!Object.prototype.hasOwnProperty.call(CHARSETS, charset)) {
+        throw new Error(`The character set ${charset} is not imitated, only ${Object.keys(CHARSETS).join(' and ')}`);
+      }
+      if (charset !== 'latin1' && majorVersion(serverVersion) < 5) {
+        throw new Error(`MySQL ${serverVersion} has one character set, latin1`);
+      }
       this.SQL = SQL;
       this.serverVersion = serverVersion;
+      this.charset = charset;
       this.users = users;
       this.now = now;
       this.databases = new Map();
@@ -998,7 +1394,7 @@
       }
       const db = bytes ? new this.SQL.Database(bytes) : new this.SQL.Database();
       db.exec(`CREATE TABLE IF NOT EXISTS ${quoteIdent(CATALOG)} (name TEXT PRIMARY KEY, definition TEXT NOT NULL)`);
-      registerFunctions(db, this.now, this.serverVersion);
+      registerFunctions(db, this.now, this.serverVersion, this.charset);
       this.databases.set(name, { db, definitions: new Map() });
     }
 
@@ -1007,7 +1403,11 @@
       if (!entry) {
         throw new Error(`No database ${name}`);
       }
-      return entry.db.export();
+      // sql.js closes and reopens the database to export it, which drops the
+      // functions registered on it. The site exports after every write.
+      const bytes = entry.db.export();
+      registerFunctions(entry.db, this.now, this.serverVersion, this.charset);
+      return bytes;
     }
 
     // The entry point for libmysql.c, through php-runtime.js. Arguments are
@@ -1136,7 +1536,10 @@
       if (!tokens.length) {
         throw new MysqlError(ER.EMPTY_QUERY, 'Query was empty');
       }
-      const stream = new TokenStream(tokens, sql);
+      const collated = this.charset === 'utf8' && tokens[0].type === 'word'
+        && ['SELECT', 'UPDATE', 'DELETE', 'INSERT', 'REPLACE'].includes(tokens[0].upper)
+        ? collateComparisons(collateOrderBy(tokens)) : tokens;
+      const stream = new TokenStream(collated, sql);
       const first = stream.peek();
       if (first.type !== 'word') {
         throw stream.error();
@@ -1175,6 +1578,7 @@
         case 'REPAIR':
           return this.maintenance(link, stream);
         case 'SET':
+          return this.set(link, stream);
         case 'LOCK':
         case 'UNLOCK':
         case 'FLUSH':
@@ -1188,6 +1592,34 @@
 
     ok(affectedRows = 0, insertId = 0) {
       return { kind: 'ok', affectedRows, insertId };
+    }
+
+    // SET NAMES and SET CHARACTER SET change what the link's @@character_set_*
+    // variables read, as in MySQL 5.5. Any other SET changes nothing.
+    set(link, stream) {
+      if (majorVersion(this.serverVersion) < 5) {
+        return this.ok();
+      }
+      stream.next();
+      const charsetName = () => {
+        if (stream.acceptWord('DEFAULT')) {
+          return this.charset;
+        }
+        const token = stream.next();
+        if (!token || !(isNameToken(token) || token.type === 'string')) {
+          throw stream.error();
+        }
+        return knownCharset(token.value);
+      };
+      if (stream.acceptWord('NAMES')) {
+        const charset = charsetName();
+        link.characterSets = { client: charset, connection: charset, results: charset };
+      } else if (stream.acceptWord('CHARSET')
+          || (stream.isWord('CHARACTER') && stream.peek(1) && stream.peek(1).upper === 'SET' && stream.next() && stream.next())) {
+        const charset = charsetName();
+        link.characterSets = { client: charset, connection: this.charset, results: charset };
+      }
+      return this.ok();
     }
 
     result(fields, rows) {
@@ -1234,7 +1666,7 @@
     // --- SELECT ---------------------------------------------------------
 
     select(link, stream) {
-      this.resolveSystemVariables(stream.tokens);
+      this.resolveSystemVariables(stream.tokens, link);
       const informationSchemaWith = this.resolveInformationSchema(stream.tokens);
       const entry = link.database && !informationSchemaWith ? this.databases.get(link.database) : null;
       const tokens = stream.tokens;
@@ -1299,20 +1731,35 @@
 
     // Replaces each @@name in a SELECT with the variable's value, as a string
     // token spanning the original text, so the column is still named
-    // "@@name". A name neither refused nor known here is left to SQLite.
-    resolveSystemVariables(tokens) {
-      const known = new Map(serverVariables(this.serverVersion).map(([name, value]) => [name.toLowerCase(), value]));
+    // "@@name". On 5.5, @@SESSION.name and @@LOCAL.name are the connection's
+    // value, and @@GLOBAL.name the server's. A name neither refused nor known
+    // here is left to SQLite.
+    resolveSystemVariables(tokens, link) {
+      const known = scope => new Map(serverVariables(this.serverVersion, this.charset, scope === 'GLOBAL' ? null : link)
+        .map(([name, value]) => [name.toLowerCase(), value]));
+      const mysql5 = majorVersion(this.serverVersion) >= 5;
       for (let i = 0; i + 2 < tokens.length; i++) {
-        const [at, at2, name] = [tokens[i], tokens[i + 1], tokens[i + 2]];
+        const [at, at2, first] = [tokens[i], tokens[i + 1], tokens[i + 2]];
         if (!(at.type === 'op' && at.value === '@' && at2.type === 'op' && at2.value === '@'
-            && at.end === at2.start && at2.end === name.start && isNameToken(name))) {
+            && at.end === at2.start && at2.end === first.start && isNameToken(first))) {
           continue;
         }
-        if (majorVersion(this.serverVersion) < 5 && CHARACTER_SET_VARIABLES.test(name.value)) {
+        let scope = 'SESSION';
+        let name = first;
+        let count = 3;
+        const [dot, scoped] = [tokens[i + 3], tokens[i + 4]];
+        if (mysql5 && first.type === 'word' && ['SESSION', 'LOCAL', 'GLOBAL'].includes(first.upper)
+            && dot && dot.type === 'op' && dot.value === '.' && scoped && isNameToken(scoped)) {
+          scope = first.upper;
+          name = scoped;
+          count = 5;
+        }
+        if (!mysql5 && CHARACTER_SET_VARIABLES.test(name.value)) {
           throw new MysqlError(ER.UNKNOWN_SYSTEM_VARIABLE, `Unknown system variable '${name.value}'`);
         }
-        if (majorVersion(this.serverVersion) >= 5 && known.has(name.value.toLowerCase())) {
-          tokens.splice(i, 3, { type: 'string', value: known.get(name.value.toLowerCase()), start: at.start, end: name.end });
+        const values = known(scope);
+        if (mysql5 && values.has(name.value.toLowerCase())) {
+          tokens.splice(i, count, { type: 'string', value: values.get(name.value.toLowerCase()), start: at.start, end: name.end });
         }
       }
     }
@@ -1345,8 +1792,9 @@
     // information_schema.COLUMNS, with the columns that MySQL 5.5 fills in
     // from a table definition alone. Not DATA_TYPE: the shim keeps a type as
     // written, so INTEGER would read "integer", where MySQL says "int". Text
-    // columns are latin1, the server's charset; numbers, dates and blobs have
-    // none, as in MySQL.
+    // columns have the charset their table was created with, the server's
+    // unless it said otherwise; numbers, dates and blobs have none, as in
+    // MySQL.
     informationSchemaColumns(name) {
       const columns = ['TABLE_CATALOG', 'TABLE_SCHEMA', 'TABLE_NAME', 'COLUMN_NAME', 'ORDINAL_POSITION',
         'COLUMN_DEFAULT', 'IS_NULLABLE', 'CHARACTER_SET_NAME', 'COLLATION_NAME', 'COLUMN_TYPE'];
@@ -1355,12 +1803,13 @@
         for (const table of this.tableNames(entry)) {
           this.definition(entry, table).columns.forEach((column, i) => {
             const text = typeKind(column.base) === 'text';
+            const charset = column.charset || this.charset;
             rows.push([
               quoteString('def'), quoteString(schema), quoteString(table), quoteString(column.name), String(i + 1),
               column.default === null ? 'NULL' : quoteString(column.default),
               quoteString(column.notNull ? 'NO' : 'YES'),
-              text ? quoteString('latin1') : 'NULL',
-              text ? quoteString(column.binary ? 'latin1_bin' : 'latin1_swedish_ci') : 'NULL',
+              text ? quoteString(charset) : 'NULL',
+              text ? quoteString(column.collation || collationOf(charset, column.binary)) : 'NULL',
               quoteString(columnTypeText(column)),
             ]);
           });
@@ -1375,7 +1824,7 @@
     scratchDatabase() {
       if (!this.scratch) {
         this.scratch = new this.SQL.Database();
-        registerFunctions(this.scratch, this.now, this.serverVersion);
+        registerFunctions(this.scratch, this.now, this.serverVersion, this.charset);
       }
       return this.scratch;
     }
@@ -1490,7 +1939,7 @@
       if (!literal || !column) {
         return emit(tokens);
       }
-      params.push(coerceLiteral(column, literal.value));
+      params.push(sqliteValue(coerceLiteral(column, literal.value)));
       return '?';
     }
 
@@ -1713,8 +2162,49 @@
           definition.autoIncrementStart = Number(options[i + 2].value);
         }
       }
+      if (majorVersion(this.serverVersion) >= 5) {
+        this.tableOptions(new TokenStream(options, stream.sql), definition);
+        definition.engine = definition.engine || 'InnoDB';
+        definition.charset = definition.charset || this.charset;
+        this.columnCharsets(definition);
+      }
       this.createTable(entry, definition);
       return this.ok();
+    }
+
+    // ENGINE (or TYPE), [DEFAULT] CHARSET or CHARACTER SET, and [DEFAULT]
+    // COLLATE, each with or without "=". Other options are skipped.
+    tableOptions(stream, definition) {
+      const value = () => {
+        stream.acceptOp('=');
+        const token = stream.next();
+        if (!token) {
+          throw stream.error();
+        }
+        return token.value;
+      };
+      while (!stream.atEnd()) {
+        stream.acceptWord('DEFAULT');
+        if (stream.acceptWord('ENGINE', 'TYPE')) {
+          definition.engine = value();
+        } else if (stream.acceptWord('CHARSET')
+            || (stream.isWord('CHARACTER') && stream.peek(1) && stream.peek(1).upper === 'SET' && stream.next() && stream.next())) {
+          definition.charset = knownCharset(value());
+        } else if (stream.acceptWord('COLLATE')) {
+          definition.collation = value().toLowerCase();
+        } else {
+          stream.next();
+        }
+      }
+    }
+
+    // Each text column without a charset of its own takes the table's.
+    columnCharsets(definition) {
+      for (const column of definition.columns) {
+        if (typeKind(column.base) === 'text' && !column.charset) {
+          column.charset = definition.charset || this.charset;
+        }
+      }
     }
 
     keyColumns(stream) {
@@ -1801,6 +2291,11 @@
           definition.primaryKey = [name];
         } else if (stream.acceptWord('COMMENT')) {
           stream.next();
+        } else if (majorVersion(this.serverVersion) >= 5 && (stream.acceptWord('CHARSET')
+            || (stream.isWord('CHARACTER') && stream.peek(1) && stream.peek(1).upper === 'SET' && stream.next() && stream.next()))) {
+          column.charset = knownCharset(stream.next().value);
+        } else if (majorVersion(this.serverVersion) >= 5 && stream.acceptWord('COLLATE')) {
+          column.collation = stream.next().value.toLowerCase();
         } else {
           break;
         }
@@ -1909,6 +2404,9 @@
       change(after);
       const renamedFrom = after.renamedFrom;
       delete after.renamedFrom;
+      if (majorVersion(this.serverVersion) >= 5) {
+        this.columnCharsets(after);
+      }
       this.rebuild(entry, before, after, renamedFrom);
       return this.ok();
     }
@@ -2017,6 +2515,12 @@
         definition.name = stream.name();
         return;
       }
+      if (majorVersion(this.serverVersion) >= 5 && stream.isWord('TYPE', 'ENGINE')) {
+        stream.next();
+        stream.acceptOp('=');
+        definition.engine = stream.next().value;
+        return;
+      }
       if (stream.isWord('TYPE', 'ENGINE', 'COMMENT', 'AUTO_INCREMENT', 'ORDER')) {
         stream.until([], [',']);
         return;
@@ -2104,10 +2608,21 @@
       }
       if (stream.acceptWord('TABLE')) {
         stream.expectWord('STATUS');
+        let database = null;
         if (stream.acceptWord('FROM', 'IN')) {
-          stream.name();
+          database = stream.name();
+          if (!this.databases.has(database)) {
+            throw new MysqlError(ER.BAD_DB, `Unknown database '${database}'`);
+          }
         }
-        return this.showTableStatus(link, this.likeFilter(stream));
+        return this.showTableStatus(link, this.likeFilter(stream), database);
+      }
+      if (majorVersion(this.serverVersion) >= 5 && (stream.acceptWord('CHARSET')
+          || (stream.isWord('CHARACTER') && stream.peek(1) && stream.peek(1).upper === 'SET' && stream.next() && stream.next()))) {
+        const like = this.likeFilter(stream);
+        return this.textResult(['Charset', 'Description', 'Default collation', 'Maxlen'],
+          Object.entries(CHARSETS).filter(([name]) => like(name))
+            .map(([name, about]) => [name, about.description, about.collation, String(about.maxlen)]));
       }
       if (stream.acceptWord('CREATE')) {
         stream.expectWord('TABLE');
@@ -2115,7 +2630,8 @@
       }
       if (stream.acceptWord('VARIABLES')) {
         const like = this.likeFilter(stream);
-        return this.textResult(['Variable_name', 'Value'], serverVariables(this.serverVersion).filter(([name]) => like(name)));
+        return this.textResult(['Variable_name', 'Value'],
+          serverVariables(this.serverVersion, this.charset, link).filter(([name]) => like(name)));
       }
       if (stream.acceptWord('STATUS')) {
         return this.textResult(['Variable_name', 'Value'], [['Uptime', '0'], ['Threads_connected', String(this.links.size)]]);
@@ -2154,9 +2670,19 @@
 
     showIndex(link, table) {
       const definition = this.definition(this.database(link), table);
+      const mysql5 = majorVersion(this.serverVersion) >= 5;
       const rows = [];
-      const add = (name, unique, columns) => columns.forEach((column, i) => rows.push(
-        [table, unique ? '0' : '1', name, String(i + 1), column, 'A', null, null, null, '']));
+      // MySQL 5.5 adds Null, Index_type and Index_comment.
+      const add = (name, unique, columns) => columns.forEach((column, i) => {
+        const row = [table, unique ? '0' : '1', name, String(i + 1), column, 'A', null, null, null];
+        if (mysql5) {
+          const found = findColumn(definition, column);
+          row.push(found && !found.notNull ? 'YES' : '', 'BTREE', '', '');
+        } else {
+          row.push('');
+        }
+        rows.push(row);
+      });
       if (definition.primaryKey.length) {
         add('PRIMARY', true, definition.primaryKey);
       }
@@ -2164,11 +2690,13 @@
         add(key.name, key.unique, key.columns);
       }
       return this.textResult(['Table', 'Non_unique', 'Key_name', 'Seq_in_index', 'Column_name', 'Collation',
-        'Cardinality', 'Sub_part', 'Packed', 'Comment'], rows, table);
+        'Cardinality', 'Sub_part', 'Packed', ...(mysql5 ? ['Null', 'Index_type', 'Comment', 'Index_comment'] : ['Comment'])],
+      rows, table);
     }
 
-    showTableStatus(link, like) {
-      const entry = this.database(link);
+    showTableStatus(link, like, database = null) {
+      const entry = database ? this.databases.get(database) : this.database(link);
+      const mysql5 = majorVersion(this.serverVersion) >= 5;
       const rows = this.tableNames(entry).filter(like).map(table => {
         const count = entry.db.exec(`SELECT count(*) FROM ${quoteIdent(table)}`)[0].values[0][0];
         const definition = this.definition(entry, table);
@@ -2176,11 +2704,23 @@
         const next = autoIncrement
           ? String(entry.db.exec(`SELECT IFNULL(MAX(${quoteIdent(autoIncrement.name)}), 0) + 1 FROM ${quoteIdent(table)}`)[0].values[0][0])
           : null;
-        return [table, 'MyISAM', 'Dynamic', String(count), '0', '0', '0', '0', '0', next, null, null, null, '', ''];
+        if (!mysql5) {
+          return [table, 'MyISAM', 'Dynamic', String(count), '0', '0', '0', '0', '0', next, null, null, null, '', ''];
+        }
+        const engine = definition.engine || 'InnoDB';
+        const charset = definition.charset || this.charset;
+        return [table, engine, '10', engine.toLowerCase() === 'innodb' ? 'Compact' : 'Dynamic', String(count),
+          '0', '0', '0', '0', '0', next, null, null, null,
+          definition.collation || collationOf(charset, false), null, '', ''];
       });
-      return this.textResult(['Name', 'Type', 'Row_format', 'Rows', 'Avg_row_length', 'Data_length',
+      if (!mysql5) {
+        return this.textResult(['Name', 'Type', 'Row_format', 'Rows', 'Avg_row_length', 'Data_length',
+          'Max_data_length', 'Index_length', 'Data_free', 'Auto_increment', 'Create_time', 'Update_time',
+          'Check_time', 'Create_options', 'Comment'], rows);
+      }
+      return this.textResult(['Name', 'Engine', 'Version', 'Row_format', 'Rows', 'Avg_row_length', 'Data_length',
         'Max_data_length', 'Index_length', 'Data_free', 'Auto_increment', 'Create_time', 'Update_time',
-        'Check_time', 'Create_options', 'Comment'], rows);
+        'Check_time', 'Collation', 'Checksum', 'Create_options', 'Comment'], rows);
     }
 
     showCreateTable(link, table) {
@@ -2200,7 +2740,10 @@
       for (const key of definition.keys) {
         lines.push(`  ${key.unique ? 'UNIQUE ' : ''}KEY ${key.name} (${key.columns.join(',')})`);
       }
-      return this.textResult(['Table', 'Create Table'], [[table, `CREATE TABLE ${table} (\n${lines.join(',\n')}\n) TYPE=MyISAM`]]);
+      const options = majorVersion(this.serverVersion) >= 5
+        ? `ENGINE=${definition.engine || 'InnoDB'} DEFAULT CHARSET=${definition.charset || this.charset}`
+        : 'TYPE=MyISAM';
+      return this.textResult(['Table', 'Create Table'], [[table, `CREATE TABLE ${table} (\n${lines.join(',\n')}\n) ${options}`]]);
     }
 
     maintenance(link, stream) {

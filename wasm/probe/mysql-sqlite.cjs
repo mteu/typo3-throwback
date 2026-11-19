@@ -2,7 +2,10 @@
 // TYPO3 relies on, and the parts the stack probes (probe/stack-<release>.cjs)
 // do not reach, such as the ALTER TABLE the Install Tool's database compare
 // sends. Then what the 5.5 server answers on top, for 4.0/provision.php, and
-// that 3.23 refuses each of those with its own error.
+// that 3.23 refuses each of those with its own error. Then a 5.5 server's
+// character set, latin1 and utf8 side by side: SET NAMES, the charset
+// variables, characters against bytes, case and accents in =, LIKE and
+// ORDER BY, and the SHOW statements 4.5's Install Tool sends.
 // Usage: node mysql-sqlite.cjs
 'use strict';
 
@@ -254,6 +257,16 @@ const CHARSET_VARIABLES = ['character_set_server', 'character_set_connection', '
     PRIMARY KEY (uid)
   )`);
 
+  // t3lib_db::setSqlMode() asks for the session's sql_mode on every connection.
+  check('5.5 answers @@SESSION., @@LOCAL. and @@GLOBAL. variables, each column named as asked', () => {
+    const scoped = connect(server55);
+    scoped.ok('SET NAMES utf8');
+    const response = scoped.query('SELECT @@SESSION.sql_mode, @@session.character_set_connection, @@LOCAL.character_set_client, @@GLOBAL.character_set_connection');
+    assert.deepStrictEqual(response.rows, [['', 'utf8', 'utf8', 'latin1']]);
+    assert.deepStrictEqual(response.fields.map(field => field.name),
+      ['@@SESSION.sql_mode', '@@session.character_set_connection', '@@LOCAL.character_set_client', '@@GLOBAL.character_set_connection']);
+  });
+
   check('5.5 answers information_schema.COLUMNS from the table definitions', () => {
     assert.deepStrictEqual(mysql55.rows(PROVISION_COLUMN_CHARSET), [['latin1']]);
     assert.deepStrictEqual(mysql55.rows(`SELECT COLUMN_NAME, ORDINAL_POSITION, COLUMN_DEFAULT, IS_NULLABLE,
@@ -284,9 +297,296 @@ const CHARSET_VARIABLES = ['character_set_server', 'character_set_connection', '
   });
 
   check("5.5's SHOW VARIABLES lists the character set variables", () => {
-    assert.deepStrictEqual(mysql55.rows("SHOW VARIABLES LIKE 'character_set%'"),
-      CHARSET_VARIABLES.map(name => [name, 'latin1']));
+    assert.deepStrictEqual(mysql55.rows("SHOW VARIABLES LIKE 'character_set%'"), [
+      ['character_set_client', 'latin1'], ['character_set_connection', 'latin1'], ['character_set_database', 'latin1'],
+      ['character_set_results', 'latin1'], ['character_set_server', 'latin1'], ['character_set_system', 'utf8'],
+    ]);
   });
+
+  // --- the character set of a 5.5 server ---------------------------------
+  //
+  // The same checks against a latin1 server, as the 4.0.13 stack runs, and a
+  // utf8 one, as the 4.5.40 stack runs. Strings travel as bytes, one JS char
+  // each: utf8() gives the bytes PHP sends for a UTF-8 string.
+  const utf8 = text => Buffer.from(text, 'utf8').toString('latin1');
+  const latin1 = text => Buffer.from(text, 'latin1').toString('latin1');
+  const servers = {};
+  for (const [charset, bytes] of [['latin1', latin1], ['utf8', utf8]]) {
+    const charsetServer = new MysqlOnSqlite(SQL, { serverVersion: '5.5.62', charset, users: { typo3: 'typo3' }, now });
+    const client = connect(charsetServer);
+    client.ok('CREATE DATABASE typo3');
+    assert.strictEqual(charsetServer.handle(3, client.link, 'typo3').kind, 'ok');
+    servers[charset] = { server: charsetServer, client, bytes };
+  }
+
+  check('a charset is 5.5 only, and latin1 or utf8', () => {
+    assert.strictEqual(new MysqlOnSqlite(SQL).charset, 'latin1');
+    assert.throws(() => new MysqlOnSqlite(SQL, { charset: 'utf8' }), /MySQL 3\.23\.49 has one character set, latin1/);
+    assert.throws(() => new MysqlOnSqlite(SQL, { serverVersion: '5.5.62', charset: 'utf8mb4' }),
+      /The character set utf8mb4 is not imitated, only latin1 and utf8/);
+  });
+
+  check("3.23 accepts SET NAMES and SET CHARACTER SET, and they change nothing", () => {
+    ok('SET NAMES utf8');
+    ok('SET CHARACTER SET utf8');
+    assert.deepStrictEqual(rows("SHOW VARIABLES LIKE 'character_set%'"), [['character_set', 'latin1']]);
+  });
+
+  check('3.23 has no SHOW CHARACTER SET, and its SHOW TABLE STATUS has 3.23\'s columns', () => {
+    assert.strictEqual(query('SHOW CHARACTER SET').errno, 1064);
+    const response = query('SHOW TABLE STATUS');
+    assert.deepStrictEqual(response.fields.map(field => field.name).slice(0, 3), ['Name', 'Type', 'Row_format']);
+    assert.deepStrictEqual(rows('SHOW CREATE TABLE pages')[0][1].split('\n').pop(), ') TYPE=MyISAM');
+  });
+
+  for (const [charset, { server: charsetServer, client, bytes }] of Object.entries(servers)) {
+    const collation = charset === 'utf8' ? 'utf8_general_ci' : 'latin1_swedish_ci';
+    const prefix = `5.5 with ${charset}:`;
+    client.ok(`CREATE TABLE pages (
+      uid int(11) unsigned NOT NULL auto_increment,
+      title varchar(255) DEFAULT '' NOT NULL,
+      nav_title varchar(5) DEFAULT '' NOT NULL,
+      code char(3) DEFAULT '' NOT NULL,
+      alias varchar(32) binary DEFAULT '' NOT NULL,
+      tstamp int(11) DEFAULT '0' NOT NULL,
+      PRIMARY KEY (uid),
+      KEY parent (tstamp, alias)
+    ) ENGINE=InnoDB`);
+    client.ok("CREATE TABLE old_style (uid int(11) NOT NULL, note varchar(10), PRIMARY KEY (uid)) TYPE=MyISAM DEFAULT CHARSET=latin1");
+
+    check(`${prefix} SET NAMES and SET CHARACTER SET change the connection's variables, and only its own`, () => {
+      const other = charset === 'utf8' ? 'latin1' : 'utf8';
+      const read = names => client.rows(`SELECT ${names.map(name => `@@character_set_${name}`).join(', ')}`)[0];
+      assert.deepStrictEqual(read(['client', 'connection', 'results', 'server', 'database']), Array(5).fill(charset));
+      client.ok(`SET NAMES ${other}`);
+      assert.deepStrictEqual(read(['client', 'connection', 'results', 'server', 'database']),
+        [other, other, other, charset, charset]);
+      assert.deepStrictEqual(client.rows('SELECT @@collation_connection, @@collation_server'),
+        [[other === 'utf8' ? 'utf8_general_ci' : 'latin1_swedish_ci', collation]]);
+      assert.deepStrictEqual(connect(charsetServer).rows('SELECT @@character_set_connection'), [[charset]]);
+      client.ok(`SET CHARACTER SET '${other}'`);
+      assert.deepStrictEqual(read(['client', 'connection', 'results']), [other, charset, other]);
+      client.ok(`SET NAMES ${charset} COLLATE ${collation}`);
+      client.ok('SET NAMES DEFAULT');
+      assert.deepStrictEqual(read(['client', 'connection', 'results']), [charset, charset, charset]);
+      const unknown = client.query('SET NAMES klingon');
+      assert.deepStrictEqual([unknown.errno, unknown.message], [1115, "Unknown character set: 'klingon'"]);
+    });
+
+    check(`${prefix} the server, the database and information_schema answer ${charset}`, () => {
+      assert.deepStrictEqual(client.rows('SELECT @@character_set_server, @@character_set_database'), [[charset, charset]]);
+      assert.deepStrictEqual(client.rows(PROVISION_COLUMN_CHARSET), [[charset]]);
+      assert.deepStrictEqual(client.rows(`SELECT COLUMN_NAME, CHARACTER_SET_NAME, COLLATION_NAME
+        FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = 'typo3' AND TABLE_NAME = 'pages' ORDER BY ORDINAL_POSITION`), [
+        ['uid', null, null], ['title', charset, collation], ['nav_title', charset, collation], ['code', charset, collation],
+        ['alias', charset, `${charset}_bin`], ['tstamp', null, null],
+      ]);
+      // A table that names its charset keeps it, whatever the server's.
+      assert.deepStrictEqual(client.rows(`SELECT CHARACTER_SET_NAME, COLLATION_NAME FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = 'typo3' AND TABLE_NAME = 'old_style' AND COLUMN_NAME = 'note'`), [['latin1', 'latin1_swedish_ci']]);
+    });
+
+    // "ő" is not in latin1.
+    const town = charset === 'utf8' ? 'Gödöllő' : 'Gödöllö';
+    const word = bytes(town);
+    check(`${prefix} varchar(n) and char(n) keep n ${charset === 'utf8' ? 'characters' : 'bytes'}`, () => {
+      const { insertId } = client.ok(`INSERT INTO pages (title, nav_title, code) VALUES ('${word}', '${word}', '${word}')`);
+      const [title, navTitle, code] = client.rows(`SELECT title, nav_title, code FROM pages WHERE uid = ${insertId}`)[0];
+      assert.strictEqual(title, word);
+      if (charset === 'utf8') {
+        assert.strictEqual(navTitle, utf8('Gödöl'));
+        assert.strictEqual(code, utf8('Göd'));
+      } else {
+        assert.strictEqual(navTitle, word.slice(0, 5));
+        assert.strictEqual(code, word.slice(0, 3));
+      }
+      // The latin1 table on any server counts bytes.
+      client.ok(`INSERT INTO old_style (uid, note) VALUES (1, '${utf8('ő').repeat(10)}')`);
+      assert.deepStrictEqual(client.rows('SELECT LENGTH(note) FROM old_style WHERE uid = 1'), [['10']]);
+    });
+
+    check(`${prefix} CHAR_LENGTH() counts ${charset === 'utf8' ? 'characters' : 'bytes'}, LENGTH() bytes`, () => {
+      const expected = charset === 'utf8' ? '7' : String(word.length);
+      assert.deepStrictEqual(client.rows(`SELECT CHAR_LENGTH('${word}'), LENGTH('${word}')`), [[expected, String(word.length)]]);
+      assert.deepStrictEqual(client.rows(`SELECT CHAR_LENGTH(title), LENGTH(title) FROM pages WHERE title = '${word}'`),
+        [[expected, String(word.length)]]);
+    });
+
+    check(`${prefix} LOWER() and UPPER()`, () => {
+      assert.deepStrictEqual(client.rows("SELECT LOWER('Skaarhoj ABC'), UPPER('abc'), LCASE('ABC'), UCASE('abc')"),
+        [['skaarhoj abc', 'ABC', 'abc', 'ABC']]);
+      if (charset === 'utf8') {
+        assert.deepStrictEqual(client.rows(`SELECT LOWER('${utf8('GÖDÖLLŐ')}'), UPPER('${word}'), LCASE('${utf8('Ő')}')`),
+          [[utf8('gödöllő'), utf8('GÖDÖLLŐ'), utf8('ő')]]);
+      }
+    });
+
+    check(`${prefix} =, LIKE and ORDER BY`, () => {
+      client.ok('DELETE FROM pages');
+      for (const title of ['Zürich', 'Öhringen', 'ober', 'Apfel', town]) {
+        client.ok(`INSERT INTO pages (title) VALUES ('${bytes(title)}')`);
+      }
+      const titles = sql => client.rows(sql).map(row => Buffer.from(row[0], 'latin1').toString(charset === 'utf8' ? 'utf8' : 'latin1'));
+      // ASCII is compared without case in both, as SQLite's NOCASE does.
+      assert.deepStrictEqual(titles("SELECT title FROM pages WHERE title = 'OBER'"), ['ober']);
+      assert.deepStrictEqual(titles("SELECT title FROM pages WHERE title LIKE 'APF%'"), ['Apfel']);
+      if (charset === 'utf8') {
+        // utf8_general_ci: case and accents do not count.
+        assert.deepStrictEqual(titles(`SELECT title FROM pages WHERE title = '${utf8('GÖDÖLLŐ')}'`), ['Gödöllő']);
+        assert.deepStrictEqual(titles(`SELECT title FROM pages WHERE pages.title <> '${utf8('GÖDÖLLŐ')}' AND title LIKE '%${utf8('ÜR')}%'`), ['Zürich']);
+        assert.deepStrictEqual(titles(`SELECT title FROM pages WHERE '${utf8('göDöllő')}' = title`), ['Gödöllő']);
+        assert.deepStrictEqual(titles("SELECT title FROM pages WHERE title LIKE 'g_d_ll_'"), ['Gödöllő']);
+        assert.deepStrictEqual(titles("SELECT title FROM pages WHERE title LIKE 'godollo'"), ['Gödöllő']);
+        assert.deepStrictEqual(titles("SELECT title FROM pages WHERE title LIKE 'Z\\_rich' OR title LIKE '\\%%'"), []);
+        assert.deepStrictEqual(titles('SELECT title FROM pages ORDER BY title'), ['Apfel', 'Gödöllő', 'ober', 'Öhringen', 'Zürich']);
+        assert.deepStrictEqual(titles('SELECT title AS t FROM pages ORDER BY t DESC LIMIT 2'), ['Zürich', 'Öhringen']);
+        // An UPDATE's SET is left alone; its WHERE compares by weight.
+        assert.strictEqual(client.ok(`UPDATE pages SET title = '${utf8('Gödöllő!')}' WHERE title = '${utf8('GODOLLŐ')}'`).affectedRows, 1);
+        assert.strictEqual(client.ok(`DELETE FROM pages WHERE title LIKE '${utf8('ÖH%')}' ORDER BY title LIMIT 1`).affectedRows, 1);
+        assert.deepStrictEqual(titles('SELECT title FROM pages ORDER BY 1'), ['Apfel', 'Gödöllő!', 'ober', 'Zürich']);
+      } else {
+        // latin1_swedish_ci sorts Ö after Z; SQLite's NOCASE, byte order,
+        // does too. Non-ASCII case is not folded.
+        assert.deepStrictEqual(titles('SELECT title FROM pages ORDER BY title'), ['Apfel', town, 'ober', 'Zürich', 'Öhringen']);
+        assert.deepStrictEqual(titles(`SELECT title FROM pages WHERE title = '${word}'`), [town]);
+      }
+    });
+
+    check(`${prefix} SHOW CHARACTER SET`, () => {
+      assert.deepStrictEqual(client.rows('SHOW CHARACTER SET'), [
+        ['latin1', 'cp1252 West European', 'latin1_swedish_ci', '1'],
+        ['utf8', 'UTF-8 Unicode', 'utf8_general_ci', '3'],
+      ]);
+      assert.deepStrictEqual(client.rows("SHOW CHARSET LIKE 'utf8'"), [['utf8', 'UTF-8 Unicode', 'utf8_general_ci', '3']]);
+    });
+
+    check(`${prefix} SHOW TABLE STATUS FROM the database, with 5.5's columns`, () => {
+      const response = client.query('SHOW TABLE STATUS FROM `typo3`');
+      assert.deepStrictEqual(response.fields.map(field => field.name), ['Name', 'Engine', 'Version', 'Row_format', 'Rows',
+        'Avg_row_length', 'Data_length', 'Max_data_length', 'Index_length', 'Data_free', 'Auto_increment', 'Create_time',
+        'Update_time', 'Check_time', 'Collation', 'Checksum', 'Create_options', 'Comment']);
+      assert.deepStrictEqual(response.rows.map(row => [row[0], row[1], row[3], row[14]]), [
+        ['old_style', 'MyISAM', 'Dynamic', 'latin1_swedish_ci'],
+        ['pages', 'InnoDB', 'Compact', collation],
+      ]);
+      assert.deepStrictEqual(client.rows("SHOW TABLE STATUS LIKE 'pages'").map(row => row[0]), ['pages']);
+      assert.strictEqual(client.query('SHOW TABLE STATUS FROM nope').errno, 1049);
+    });
+
+    check(`${prefix} SHOW KEYS and SHOW INDEX, with 5.5's columns`, () => {
+      const response = client.query('SHOW KEYS FROM `pages`');
+      assert.deepStrictEqual(response.fields.map(field => field.name), ['Table', 'Non_unique', 'Key_name', 'Seq_in_index',
+        'Column_name', 'Collation', 'Cardinality', 'Sub_part', 'Packed', 'Null', 'Index_type', 'Comment', 'Index_comment']);
+      assert.deepStrictEqual(response.rows.map(row => [row[2], row[3], row[4], row[9], row[10]]), [
+        ['PRIMARY', '1', 'uid', '', 'BTREE'], ['parent', '1', 'tstamp', '', 'BTREE'], ['parent', '2', 'alias', '', 'BTREE'],
+      ]);
+      assert.deepStrictEqual(client.rows('SHOW INDEX FROM pages'), response.rows);
+    });
+
+    check(`${prefix} ENGINE and DEFAULT CHARSET are kept, and ALTER TABLE ENGINE changes the engine`, () => {
+      assert.strictEqual(client.rows('SHOW CREATE TABLE pages')[0][1].split('\n').pop(), `) ENGINE=InnoDB DEFAULT CHARSET=${charset}`);
+      assert.strictEqual(client.rows('SHOW CREATE TABLE old_style')[0][1].split('\n').pop(), ') ENGINE=MyISAM DEFAULT CHARSET=latin1');
+      client.ok('ALTER TABLE old_style ENGINE=InnoDB');
+      assert.strictEqual(client.rows('SHOW CREATE TABLE old_style')[0][1].split('\n').pop(), ') ENGINE=InnoDB DEFAULT CHARSET=latin1');
+      client.ok('ALTER TABLE pages ADD subtitle varchar(3) DEFAULT \'\' NOT NULL');
+      assert.deepStrictEqual(client.rows(`SELECT CHARACTER_SET_NAME FROM information_schema.COLUMNS
+        WHERE TABLE_NAME = 'pages' AND COLUMN_NAME = 'subtitle'`), [[charset]]);
+    });
+
+    check(`${prefix} a restored database keeps each table's charset`, () => {
+      const restored = new MysqlOnSqlite(SQL, { serverVersion: '5.5.62', charset, users: { typo3: 'typo3' }, now });
+      restored.addDatabase('typo3', charsetServer.exportDatabase('typo3'));
+      const again = connect(restored);
+      assert.strictEqual(restored.handle(3, again.link, 'typo3').kind, 'ok');
+      const { insertId } = again.ok(`INSERT INTO pages (nav_title) VALUES ('${word}')`);
+      assert.strictEqual(again.rows(`SELECT nav_title FROM pages WHERE uid = ${insertId}`)[0][0],
+        charset === 'utf8' ? utf8('Gödöl') : word.slice(0, 5));
+      assert.strictEqual(again.rows('SHOW CREATE TABLE old_style')[0][1].split('\n').pop(), ') ENGINE=InnoDB DEFAULT CHARSET=latin1');
+    });
+  }
+
+  // --- strings with a NUL byte ----------------------------------------------
+  //
+  // serialize() writes one on each side of a protected property's name, and
+  // TYPO3 stores serialized objects in its sessions, be_users.uc and its
+  // caches. PHP's mysql_real_escape_string() sends the byte as \0. Every
+  // server mode keeps such a string byte for byte.
+  const OBJECT = 'O:4:"Demo":2:{s:7:"\0*\0name";s:3:"x\xe4y";s:10:"\0Demo\0uid";i:7;}';
+  const sqlString = text => `'${text.replace(/\\/g, '\\\\').replace(/\0/g, '\\0').replace(/'/g, "\\'")}'`;
+  for (const [serverVersion, charset] of [['3.23.49', 'latin1'], ['5.5.62', 'latin1'], ['5.5.62', 'utf8']]) {
+    const prefix = `${serverVersion} ${charset}, NUL bytes:`;
+    const nulServer = new MysqlOnSqlite(SQL, { serverVersion, ...(serverVersion === '5.5.62' ? { charset } : {}), users: { typo3: 'typo3' }, now });
+    const client = connect(nulServer);
+    client.ok('CREATE DATABASE typo3');
+    assert.strictEqual(nulServer.handle(3, client.link, 'typo3').kind, 'ok');
+    client.ok(`CREATE TABLE sessions (
+      uid int(11) unsigned NOT NULL auto_increment,
+      title varchar(20) DEFAULT '' NOT NULL,
+      data mediumtext,
+      uc blob,
+      PRIMARY KEY (uid)
+    )`);
+
+    check(`${prefix} INSERT keeps a serialized object byte for byte, in text and blob columns`, () => {
+      const { insertId } = client.ok(`INSERT INTO sessions (title, data, uc) VALUES ('a\\0b', ${sqlString(OBJECT)}, ${sqlString(OBJECT)})`);
+      assert.deepStrictEqual(client.rows(`SELECT title, data, uc FROM sessions WHERE uid = ${insertId}`), [['a\0b', OBJECT, OBJECT]]);
+      const response = client.query(`SELECT data FROM sessions WHERE uid = ${insertId}`);
+      assert.strictEqual(response.fields[0].maxLength, OBJECT.length);
+    });
+
+    check(`${prefix} LENGTH() counts bytes and CHAR_LENGTH() characters`, () => {
+      assert.deepStrictEqual(client.rows("SELECT LENGTH(title), CHAR_LENGTH(title), LENGTH(data) FROM sessions WHERE uid = 1"),
+        [['3', '3', String(OBJECT.length)]]);
+    });
+
+    check(`${prefix} UPDATE writes one, and = finds the row by its bytes`, () => {
+      client.ok("INSERT INTO sessions (title) VALUES ('plain')");
+      assert.strictEqual(client.ok(`UPDATE sessions SET data = ${sqlString(`${OBJECT}\0`)} WHERE title = 'plain'`).affectedRows, 1);
+      assert.deepStrictEqual(client.rows(`SELECT title FROM sessions WHERE data = ${sqlString(`${OBJECT}\0`)}`), [['plain']]);
+      assert.deepStrictEqual(client.rows("SELECT uid FROM sessions WHERE title = 'a\\0b'"), [['1']]);
+      assert.deepStrictEqual(client.rows("SELECT uid FROM sessions WHERE title = 'a\\0c'"), []);
+      assert.deepStrictEqual(client.rows("SELECT uid FROM sessions WHERE title = 'PLAIN'"), [['2']]);
+    });
+
+    check(`${prefix} LIKE matches past the NUL byte, and ASCII letters without case`, () => {
+      assert.deepStrictEqual(client.rows("SELECT uid FROM sessions WHERE title LIKE '%B'"), [['1']]);
+      assert.deepStrictEqual(client.rows("SELECT uid FROM sessions WHERE title LIKE 'a_b'"), [['1']]);
+      assert.deepStrictEqual(client.rows("SELECT uid FROM sessions WHERE title LIKE 'a\\0%'"), [['1']]);
+      assert.deepStrictEqual(client.rows("SELECT uid FROM sessions WHERE data LIKE '%\\0Demo\\0uid%' ORDER BY uid"), [['1'], ['2']]);
+      assert.deepStrictEqual(client.rows("SELECT uid FROM sessions WHERE title LIKE 'P_A%'"), [['2']]);
+      assert.deepStrictEqual(client.rows("SELECT uid FROM sessions WHERE title NOT LIKE '%a%'"), []);
+    });
+
+    check(`${prefix} functions keep the byte: CONCAT, LEFT, SUBSTRING, UCASE, HEX`, () => {
+      assert.deepStrictEqual(client.rows("SELECT CONCAT(title, '!'), LEFT(title, 2), SUBSTRING(title, 2), UCASE(title) FROM sessions WHERE uid = 1"),
+        [['a\0b!', 'a\0', '\0b', 'A\0B']]);
+      assert.deepStrictEqual(client.rows("SELECT CONCAT('x\\0', 'y')"), [['x\0y']]);
+      if (serverVersion === '5.5.62') {
+        assert.deepStrictEqual(client.rows("SELECT HEX(title) FROM sessions WHERE uid = 1"), [['610062']]);
+      }
+    });
+
+    check(`${prefix} ORDER BY puts a string with one after every string without`, () => {
+      client.ok("INSERT INTO sessions (title) VALUES ('zzz'), ('a\\0a')");
+      assert.deepStrictEqual(client.rows('SELECT title FROM sessions ORDER BY title'), [['plain'], ['zzz'], ['a\0a'], ['a\0b']]);
+    });
+
+    // The site exports its database after every write, and goes on serving.
+    check(`${serverVersion} ${charset}: after an export, the server's own functions still answer`, () => {
+      nulServer.exportDatabase('typo3');
+      assert.deepStrictEqual(client.rows("SELECT FIND_IN_SET('b', 'a,b'), CONCAT('x', 'y'), UNIX_TIMESTAMP(), CHAR_LENGTH('abc')"),
+        [['2', 'xy', String(now() / 1000), '3']]);
+      assert.deepStrictEqual(client.rows("SELECT uid FROM sessions WHERE title LIKE '%B'"), [['1']]);
+    });
+
+    check(`${prefix} a restored database keeps it`, () => {
+      const restored = new MysqlOnSqlite(SQL, { serverVersion, ...(serverVersion === '5.5.62' ? { charset } : {}), users: { typo3: 'typo3' }, now });
+      restored.addDatabase('typo3', nulServer.exportDatabase('typo3'));
+      const again = connect(restored);
+      assert.strictEqual(restored.handle(3, again.link, 'typo3').kind, 'ok');
+      assert.deepStrictEqual(again.rows('SELECT data FROM sessions WHERE uid = 1'), [[OBJECT]]);
+    });
+  }
 
   console.log(failures === 0 ? 'mysql on sqlite: all checks passed' : `mysql on sqlite: ${failures} failed`);
   process.exit(failures === 0 ? 0 : 1);

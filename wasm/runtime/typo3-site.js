@@ -140,9 +140,12 @@
       const restorable = database && snapshot && snapshot.version === release.snapshotVersion;
       const clock = clockStartMs === null ? null : PhpRuntime.clockStartingAt(clockStartMs);
       if (database) {
+        // mysqlServerVersion and mysqlCharset name the server the release's
+        // Docker stack runs. Without them: 3.23.49, latin1.
         this.mysql = new MysqlOnSqlite(SQL, {
           users: { typo3: 'typo3' },
           ...(release.mysqlServerVersion ? { serverVersion: release.mysqlServerVersion } : {}),
+          ...(release.mysqlCharset ? { charset: release.mysqlCharset } : {}),
           ...(clock ? { now: clock } : {}),
         });
         if (restorable) {
@@ -161,10 +164,12 @@
 
       this.progress(`unpacking ${release.archiveRoot}`, 0.3);
       this.unpack(FS, readTar(tarball));
-      release.editSource({
-        read: path => readText(FS, `${this.source}/${path}`),
-        write: (path, text) => FS.writeFile(`${this.source}/${path}`, encoder.encode(text)),
-      });
+      if (release.editSource) {
+        release.editSource({
+          read: path => readText(FS, `${this.source}/${path}`),
+          write: (path, text) => FS.writeFile(`${this.source}/${path}`, encoder.encode(text)),
+        });
+      }
       this.assembleDocroot(FS);
 
       if (restorable) {
@@ -240,6 +245,9 @@
       }
       for (const dir of this.release.writableDirs) {
         FS.mkdirTree(`${root}/${dir}`);
+      }
+      for (const [path, text] of Object.entries(this.release.docrootFiles || {})) {
+        FS.writeFile(`${root}/${path}`, encoder.encode(text));
       }
       FS.writeFile(`${root}/typo3conf/localconf.php`, encoder.encode(['<?php', ...this.release.localconf, '?>', ''].join('\n')));
     }
