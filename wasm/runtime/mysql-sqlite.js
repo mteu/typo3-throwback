@@ -13,11 +13,12 @@
 //            connection's after SET NAMES or SET CHARACTER SET, and
 //            @@sql_mode, also as @@SESSION.name, @@LOCAL.name and
 //            @@GLOBAL.name;
-//            information_schema.COLUMNS, built from each table's MySQL
-//            definition; HEX() of a string's bytes, as since MySQL 4.0.1;
-//            SHOW CHARACTER SET, and SHOW TABLE STATUS, SHOW KEYS and SHOW
-//            CREATE TABLE with MySQL 5.5's columns, and with the ENGINE and
-//            DEFAULT CHARSET each table was created with.
+//            information_schema.COLUMNS, SCHEMATA and TABLES, built from each
+//            table's MySQL definition; HEX() of a string's bytes, as since MySQL 4.0.1;
+//            SHOW CHARACTER SET, SHOW GLOBAL and SESSION VARIABLES, and SHOW
+//            TABLE STATUS, SHOW KEYS and SHOW CREATE TABLE with MySQL 5.5's
+//            columns, and with the ENGINE and DEFAULT CHARSET each table was
+//            created with.
 //            Everything else answers as it does for 3.23.
 //
 // A 5.5.62 server has a character set too, which the release file names
@@ -92,7 +93,7 @@
     DB_CREATE_EXISTS: 1007, DB_DROP_EXISTS: 1008, ACCESS_DENIED: 1045,
     NO_DB: 1046, BAD_DB: 1049, TABLE_EXISTS: 1050, BAD_TABLE: 1051,
     BAD_FIELD: 1054, DUP_ENTRY: 1062, PARSE: 1064, EMPTY_QUERY: 1065,
-    KEY_DOES_NOT_EXIST: 1091, UNKNOWN: 1105, NO_SUCH_TABLE: 1146,
+    KEY_DOES_NOT_EXIST: 1091, UNKNOWN: 1105, UNKNOWN_TABLE: 1109, NO_SUCH_TABLE: 1146,
     UNKNOWN_SYSTEM_VARIABLE: 1193, NOT_SUPPORTED: 1235,
   };
   const CATALOG = '__phpwasm_mysql_tables';
@@ -317,6 +318,37 @@
     error() {
       const token = this.peek();
       return syntaxError(this.sql, token ? token.start : this.sql.length);
+    }
+  }
+
+  // MySQL's LIMIT takes integer literals only: LIMIT n, LIMIT m, n or
+  // LIMIT n OFFSET m. Anything else there is a syntax error, where SQLite
+  // would evaluate an expression, or fail on NULL with "datatype mismatch".
+  function checkLimit(tokens, sql) {
+    const integer = token => token && token.type === 'number' && /^[0-9]+$/.test(token.value);
+    let depth = 0;
+    for (let i = 0; i < tokens.length; i++) {
+      const token = tokens[i];
+      if (token.type === 'op' && token.value === '(') {
+        depth++;
+      } else if (token.type === 'op' && token.value === ')') {
+        depth--;
+      } else if (depth === 0 && token.type === 'word' && token.upper === 'LIMIT') {
+        const [first, joiner, second] = tokens.slice(i + 1, i + 4);
+        if (!integer(first)) {
+          throw syntaxError(sql, first ? first.start : sql.length);
+        }
+        const paired = joiner && ((joiner.type === 'op' && joiner.value === ',') || joiner.upper === 'OFFSET');
+        if (paired && !integer(second)) {
+          throw syntaxError(sql, second ? second.start : sql.length);
+        }
+        i += paired ? 3 : 1;
+        const after = tokens[i + 1];
+        if (after && !(after.type === 'op' && (after.value === ')' || after.value === ';'))
+            && !(after.type === 'word' && ['PROCEDURE', 'INTO', 'FOR', 'LOCK', 'UNION'].includes(after.upper))) {
+          throw syntaxError(sql, after.start);
+        }
+      }
     }
   }
 
@@ -858,6 +890,28 @@
       + ` ON ${quoteIdent(definition.name)} (${key.columns.map(quoteIdent).join(', ')})`;
   }
 
+  // A key's prefix lengths, one per column, null for none. Definitions
+  // saved before prefixes were kept have none.
+  function keyPrefixes(key) {
+    return key.prefixes || key.columns.map(() => null);
+  }
+
+  // The prefix length MySQL reports for a key column, as SHOW KEYS' Sub_part
+  // and in SHOW CREATE TABLE, or null. MySQL 5.5 reports it only when the
+  // prefix covers less than the whole column (sql_show.cc,
+  // get_schema_stat_record()), so sha1(40) on a char(40) reads back as sha1.
+  function reportedPrefix(definition, name, prefix) {
+    if (prefix === null) {
+      return null;
+    }
+    const column = findColumn(definition, name);
+    if (column && ['CHAR', 'VARCHAR', 'BINARY', 'VARBINARY'].includes(column.base) && column.length !== null
+        && prefix >= Number(column.length)) {
+      return null;
+    }
+    return prefix;
+  }
+
   function findColumn(definition, name) {
     const lower = String(name).toLowerCase();
     return definition.columns.find(column => column.name.toLowerCase() === lower) || null;
@@ -1026,6 +1080,12 @@
   }
 
   const SERVER_VERSIONS = ['3.23.49', '5.5.62'];
+
+  const INFORMATION_SCHEMA = 'information_schema';
+
+  function notImitatedAsCurrent() {
+    return new MysqlError(ER.UNKNOWN, 'information_schema as the current database is not imitated, only its tables by their full names');
+  }
 
   // Character set variables came with MySQL 4.1. 3.23 refuses them by name.
   const CHARACTER_SET_VARIABLES = /^character_set_/i;
@@ -1450,12 +1510,22 @@
     connect(host, user, password) {
       const name = user || '';
       if (this.users && this.users[name] !== (password || '')) {
-        throw new MysqlError(ER.ACCESS_DENIED,
-          `Access denied for user: '${name}@${host || 'localhost'}' (Using password: ${password ? 'YES' : 'NO'})`);
+        // 3.23's wording, and 5.x's, which quotes user and host apart.
+        const using = password ? 'YES' : 'NO';
+        throw new MysqlError(ER.ACCESS_DENIED, majorVersion(this.serverVersion) >= 5
+          ? `Access denied for user '${name}'@'${host || 'localhost'}' (using password: ${using})`
+          : `Access denied for user: '${name}@${host || 'localhost'}' (Using password: ${using})`);
       }
       const id = this.nextLink++;
       this.links.set(id, { database: null, host: host || 'localhost' });
-      return { kind: 'link', link: id, serverVersion: this.serverVersion, hostInfo: `${host || 'localhost'} via SQLite in WebAssembly` };
+      return {
+        kind: 'link',
+        link: id,
+        serverVersion: this.serverVersion,
+        hostInfo: `${host || 'localhost'} via SQLite in WebAssembly`,
+        // What a connection starts in, before any SET NAMES.
+        charset: this.charset,
+      };
     }
 
     link(id) {
@@ -1466,16 +1536,26 @@
       return link;
     }
 
+    // MySQL 5.5 lets any user select information_schema. Its tables are
+    // only imitated by their full names, so a statement that needs it as the
+    // current database is refused.
     selectDatabase(link, name) {
-      if (!this.databases.has(name)) {
+      if (!this.databases.has(name) && !this.isInformationSchema(name)) {
         throw new MysqlError(ER.BAD_DB, `Unknown database '${name}'`);
       }
-      link.database = name;
+      link.database = this.isInformationSchema(name) ? INFORMATION_SCHEMA : name;
+    }
+
+    isInformationSchema(name) {
+      return majorVersion(this.serverVersion) >= 5 && String(name).toLowerCase() === INFORMATION_SCHEMA;
     }
 
     database(link) {
       if (!link.database) {
         throw new MysqlError(ER.NO_DB, 'No Database Selected');
+      }
+      if (link.database === INFORMATION_SCHEMA) {
+        throw notImitatedAsCurrent();
       }
       return this.databases.get(link.database);
     }
@@ -1685,8 +1765,9 @@
         rest = rest.slice(2);
       } else if (!entry && !informationSchemaWith && rest.length && rest[0].upper === 'FROM') {
         // Only a SELECT without tables runs before a database is selected.
-        throw new MysqlError(ER.NO_DB, 'No Database Selected');
+        throw link.database === INFORMATION_SCHEMA ? notImitatedAsCurrent() : new MysqlError(ER.NO_DB, 'No Database Selected');
       }
+      checkLimit(rest, stream.sql);
       const sources = entry && stream.acceptWord('FROM') ? this.fromTables(entry, stream) : [];
 
       // MySQL names an unaliased expression column by its text as written.
@@ -1764,13 +1845,13 @@
       }
     }
 
-    // Replaces information_schema.COLUMNS in a SELECT with a table of the same
-    // name, built in a WITH clause, which it returns. The statement then runs
-    // in the scratch database, as information_schema's tables belong to no
-    // database. Returns null for a SELECT that does not read
-    // information_schema.
+    // Replaces information_schema.COLUMNS and TABLES in a SELECT with tables
+    // of the same names, built in a WITH clause, which it returns. The
+    // statement then runs in the scratch database, as information_schema's
+    // tables belong to no database. Returns null for a SELECT that does not
+    // read information_schema.
     resolveInformationSchema(tokens) {
-      let withClause = null;
+      const built = new Map();
       for (let i = 0; i + 2 < tokens.length; i++) {
         const [schema, dot, table] = [tokens[i], tokens[i + 1], tokens[i + 2]];
         if (!(isNameToken(schema) && schema.value.toLowerCase() === 'information_schema'
@@ -1780,13 +1861,57 @@
         if (majorVersion(this.serverVersion) < 5) {
           throw new MysqlError(ER.NO_SUCH_TABLE, `Table '${schema.value}.${table.value}' doesn't exist`);
         }
-        if (table.value.toUpperCase() !== 'COLUMNS') {
-          throw new MysqlError(ER.UNKNOWN, `information_schema.${table.value} is not imitated, only COLUMNS`);
+        const build = {
+          COLUMNS: name => this.informationSchemaColumns(name),
+          SCHEMATA: name => this.informationSchemaSchemata(name),
+          TABLES: name => this.informationSchemaTables(name),
+        }[table.value.toUpperCase()];
+        if (!build) {
+          throw new MysqlError(ER.UNKNOWN, `information_schema.${table.value} is not imitated, only COLUMNS, SCHEMATA and TABLES`);
         }
-        withClause = this.informationSchemaColumns(table.value);
+        built.set(table.value.toUpperCase(), build(table.value));
         tokens.splice(i, 3, { type: 'ident', value: table.value, start: schema.start, end: table.end });
       }
-      return withClause;
+      return built.size ? `WITH ${[...built.values()].join(', ')} ` : null;
+    }
+
+    // A WITH clause's table: name(columns) AS (rows).
+    commonTable(name, columns, rows) {
+      const body = rows.length
+        ? `VALUES ${rows.map(row => `(${row.join(', ')})`).join(', ')}`
+        : `SELECT ${columns.map(() => 'NULL').join(', ')} WHERE 0`;
+      return `${quoteIdent(name)}(${columns.map(quoteIdent).join(', ')}) AS (${body})`;
+    }
+
+    // information_schema.SCHEMATA: information_schema itself, then each
+    // database, with the server's charset, which CREATE DATABASE here takes.
+    informationSchemaSchemata(name) {
+      const columns = ['CATALOG_NAME', 'SCHEMA_NAME', 'DEFAULT_CHARACTER_SET_NAME', 'DEFAULT_COLLATION_NAME', 'SQL_PATH'];
+      const row = (schema, charset) => [quoteString('def'), quoteString(schema), quoteString(charset),
+        quoteString(collationOf(charset, false)), 'NULL'];
+      return this.commonTable(name, columns, [
+        row(INFORMATION_SCHEMA, 'utf8'),
+        ...[...this.databases.keys()].sort().map(schema => row(schema, this.charset)),
+      ]);
+    }
+
+    // information_schema.TABLES, with what SHOW TABLE STATUS says of each
+    // table. MySQL 5.5 estimates TABLE_ROWS for InnoDB; this counts them.
+    informationSchemaTables(name) {
+      const columns = ['TABLE_CATALOG', 'TABLE_SCHEMA', 'TABLE_NAME', 'TABLE_TYPE', 'ENGINE', 'VERSION',
+        'ROW_FORMAT', 'TABLE_ROWS', 'AUTO_INCREMENT', 'TABLE_COLLATION', 'TABLE_COMMENT'];
+      const rows = [];
+      for (const [schema, entry] of [...this.databases].sort(([a], [b]) => (a < b ? -1 : 1))) {
+        for (const table of this.tableNames(entry)) {
+          const status = this.tableStatus(entry, table);
+          rows.push([
+            quoteString('def'), quoteString(schema), quoteString(table), quoteString('BASE TABLE'),
+            quoteString(status.engine), '10', quoteString(status.rowFormat), String(status.rows),
+            status.autoIncrement === null ? 'NULL' : status.autoIncrement, quoteString(status.collation), quoteString(''),
+          ]);
+        }
+      }
+      return this.commonTable(name, columns, rows);
     }
 
     // information_schema.COLUMNS, with the columns that MySQL 5.5 fills in
@@ -1815,10 +1940,7 @@
           });
         }
       }
-      const body = rows.length
-        ? `VALUES ${rows.map(row => `(${row.join(', ')})`).join(', ')}`
-        : `SELECT ${columns.map(() => 'NULL').join(', ')} WHERE 0`;
-      return `WITH ${quoteIdent(name)}(${columns.map(quoteIdent).join(', ')}) AS (${body}) `;
+      return this.commonTable(name, columns, rows);
     }
 
     scratchDatabase() {
@@ -2092,10 +2214,66 @@
       while (stream.acceptWord('LOW_PRIORITY', 'QUICK', 'IGNORE')) {
         // No SQLite meaning.
       }
+      if (!stream.isWord('FROM') && majorVersion(this.serverVersion) >= 4) {
+        return this.deleteJoined(entry, stream);
+      }
       stream.expectWord('FROM');
       const table = stream.name();
       this.definition(entry, table);
       return this.ok(this.run(entry, `DELETE FROM ${quoteIdent(table)}${this.limitedWhere(table, stream)}`));
+    }
+
+    // MySQL 4.0's multi-table DELETE, in the form TYPO3 6.2's caching
+    // framework sends it: DELETE alias[.*], ... FROM <tables and joins>
+    // [WHERE ...]. MySQL finds the rows of the join, then deletes each named
+    // table's share of them, so here every table's rows are found, by rowid,
+    // before any is deleted. The other form, DELETE FROM ... USING ..., is
+    // refused as before.
+    deleteJoined(entry, stream) {
+      const targets = splitTopLevel(stream.until(['FROM'])).map(target => {
+        const plain = target.length === 1 && isNameToken(target[0]);
+        const starred = target.length === 3 && isNameToken(target[0]) && target[1].value === '.' && target[2].value === '*';
+        if (!plain && !starred) {
+          throw syntaxError(stream.sql, target.length ? target[0].start : stream.sql.length);
+        }
+        return target[0].value;
+      });
+      if (!targets.length) {
+        throw stream.error();
+      }
+      stream.expectWord('FROM');
+      const fromStart = stream.i;
+      const sources = this.fromTables(entry, stream);
+      const from = stream.tokens.slice(fromStart, stream.i);
+      const where = stream.acceptWord('WHERE') ? stream.until() : [];
+      if (!stream.atEnd()) {
+        throw stream.error();
+      }
+      const doomed = new Map();
+      for (const target of targets) {
+        const source = sources.find(candidate => candidate.alias === target);
+        if (!source) {
+          throw new MysqlError(ER.UNKNOWN_TABLE, `Unknown table '${target}' in MULTI DELETE`);
+        }
+        const found = entry.db.exec(`SELECT DISTINCT ${quoteIdent(target)}.rowid FROM ${emit(from)}${where.length ? ` WHERE ${emit(where)}` : ''}`);
+        const rowids = doomed.get(source.definition.name) || new Set();
+        // A row a LEFT JOIN found no match for has no rowid.
+        for (const [rowid] of found.length ? found[0].values : []) {
+          if (rowid !== null) {
+            rowids.add(rowid);
+          }
+        }
+        doomed.set(source.definition.name, rowids);
+      }
+      let affected = 0;
+      for (const [table, rowids] of doomed) {
+        const list = [...rowids];
+        // Within SQLite's limit on a statement's terms.
+        for (let i = 0; i < list.length; i += 500) {
+          affected += this.run(entry, `DELETE FROM ${quoteIdent(table)} WHERE rowid IN (${list.slice(i, i + 500).join(', ')})`);
+        }
+      }
+      return this.ok(affected);
     }
 
     truncate(link, stream) {
@@ -2134,7 +2312,8 @@
         stream.expectWord('ON');
         const table = stream.name();
         const definition = JSON.parse(JSON.stringify(this.definition(entry, table)));
-        const key = { name, unique, columns: this.keyColumns(stream) };
+        const prefixes = [];
+        const key = { name, unique, columns: this.keyColumns(stream, prefixes), prefixes };
         definition.keys.push(key);
         this.rebuild(entry, definition, definition);
         return this.ok();
@@ -2207,15 +2386,25 @@
       }
     }
 
-    keyColumns(stream) {
+    // The columns of a key. prefixes, when given, gets each column's prefix
+    // length, as in KEY title (title(20)), or null: SQLite indexes the whole
+    // column either way, but SHOW KEYS and SHOW CREATE TABLE report them.
+    keyColumns(stream, prefixes = null) {
       const columns = [];
       stream.expectOp('(');
       do {
         columns.push(stream.name());
+        let prefix = null;
         if (stream.acceptOp('(')) {
-          // A prefix length, as in KEY title (title(20)).
-          stream.until();
+          const length = stream.next();
+          if (!length || length.type !== 'number') {
+            throw stream.error();
+          }
+          prefix = Number(length.value);
           stream.expectOp(')');
+        }
+        if (prefixes) {
+          prefixes.push(prefix);
         }
         stream.acceptWord('ASC', 'DESC');
       } while (stream.acceptOp(','));
@@ -2239,9 +2428,10 @@
           stream.acceptWord('KEY', 'INDEX');
         }
         const name = isNameToken(stream.peek()) ? stream.name() : null;
-        const columns = this.keyColumns(stream);
+        const prefixes = [];
+        const columns = this.keyColumns(stream, prefixes);
         if (kind !== 'FULLTEXT') {
-          definition.keys.push({ name: name || this.keyName(definition, columns[0]), unique: kind === 'UNIQUE', columns });
+          definition.keys.push({ name: name || this.keyName(definition, columns[0]), unique: kind === 'UNIQUE', columns, prefixes });
         }
         return;
       }
@@ -2505,7 +2695,9 @@
         definition.columns.splice(index, 1);
         definition.primaryKey = definition.primaryKey.filter(column => column.toLowerCase() !== name.toLowerCase());
         for (const key of definition.keys) {
-          key.columns = key.columns.filter(column => column.toLowerCase() !== name.toLowerCase());
+          const kept = key.columns.map(column => column.toLowerCase() !== name.toLowerCase());
+          key.columns = key.columns.filter((column, i) => kept[i]);
+          key.prefixes = keyPrefixes(key).filter((prefix, i) => kept[i]);
         }
         definition.keys = definition.keys.filter(key => key.columns.length);
         return;
@@ -2572,9 +2764,17 @@
     show(link, stream) {
       stream.next();
       stream.acceptWord('FULL');
+      // SHOW GLOBAL and SHOW SESSION VARIABLES or STATUS, since 4.0.3: the
+      // server's values, or the connection's, which a bare SHOW reads too.
+      let scope = null;
+      if (majorVersion(this.serverVersion) >= 5 && stream.isWord('GLOBAL', 'SESSION', 'LOCAL')
+          && stream.peek(1) && stream.peek(1).type === 'word' && ['VARIABLES', 'STATUS'].includes(stream.peek(1).upper)) {
+        scope = stream.next().upper;
+      }
       if (stream.acceptWord('DATABASES')) {
         const like = this.likeFilter(stream);
-        return this.textResult(['Database'], [...this.databases.keys()].sort().filter(like).map(name => [name]));
+        const names = [...(majorVersion(this.serverVersion) >= 5 ? [INFORMATION_SCHEMA] : []), ...[...this.databases.keys()].sort()];
+        return this.textResult(['Database'], names.filter(like).map(name => [name]));
       }
       if (stream.acceptWord('TABLES')) {
         let entry = null;
@@ -2587,6 +2787,9 @@
         }
         if (!name) {
           throw new MysqlError(ER.NO_DB, 'No Database Selected');
+        }
+        if (name === INFORMATION_SCHEMA) {
+          throw notImitatedAsCurrent();
         }
         entry = this.databases.get(name);
         const pattern = stream.isWord('LIKE') ? stream.peek(1).value : null;
@@ -2631,7 +2834,7 @@
       if (stream.acceptWord('VARIABLES')) {
         const like = this.likeFilter(stream);
         return this.textResult(['Variable_name', 'Value'],
-          serverVariables(this.serverVersion, this.charset, link).filter(([name]) => like(name)));
+          serverVariables(this.serverVersion, this.charset, scope === 'GLOBAL' ? null : link).filter(([name]) => like(name)));
       }
       if (stream.acceptWord('STATUS')) {
         return this.textResult(['Variable_name', 'Value'], [['Uptime', '0'], ['Threads_connected', String(this.links.size)]]);
@@ -2657,12 +2860,14 @@
 
     showColumns(link, table, like) {
       const definition = this.definition(this.database(link), table);
+      const mysql5 = majorVersion(this.serverVersion) >= 5;
       const rows = definition.columns.filter(column => !like || like(column.name)).map(column => {
         const flags = fieldFlags(definition, column);
         const key = flags & FLAG.PRI_KEY ? 'PRI' : (flags & FLAG.UNIQUE_KEY ? 'UNI' : (flags & FLAG.MULTIPLE_KEY ? 'MUL' : ''));
         const defaultValue = column.default !== null ? column.default
           : (column.notNull && !column.autoIncrement && !TEXT_TYPES[column.base] ? implicitDefault(column) : null);
-        return [column.name, columnTypeText(column), column.notNull ? '' : 'YES', key, defaultValue,
+        // NOT NULL is "NO" since MySQL 5.0, and empty before.
+        return [column.name, columnTypeText(column), column.notNull ? (mysql5 ? 'NO' : '') : 'YES', key, defaultValue,
           column.autoIncrement ? 'auto_increment' : ''];
       });
       return this.textResult(['Field', 'Type', 'Null', 'Key', 'Default', 'Extra'], rows, table);
@@ -2673,8 +2878,9 @@
       const mysql5 = majorVersion(this.serverVersion) >= 5;
       const rows = [];
       // MySQL 5.5 adds Null, Index_type and Index_comment.
-      const add = (name, unique, columns) => columns.forEach((column, i) => {
-        const row = [table, unique ? '0' : '1', name, String(i + 1), column, 'A', null, null, null];
+      const add = (name, unique, columns, prefixes) => columns.forEach((column, i) => {
+        const prefix = reportedPrefix(definition, column, prefixes[i]);
+        const row = [table, unique ? '0' : '1', name, String(i + 1), column, 'A', null, prefix === null ? null : String(prefix), null];
         if (mysql5) {
           const found = findColumn(definition, column);
           row.push(found && !found.notNull ? 'YES' : '', 'BTREE', '', '');
@@ -2684,34 +2890,45 @@
         rows.push(row);
       });
       if (definition.primaryKey.length) {
-        add('PRIMARY', true, definition.primaryKey);
+        add('PRIMARY', true, definition.primaryKey, definition.primaryKey.map(() => null));
       }
       for (const key of definition.keys) {
-        add(key.name, key.unique, key.columns);
+        add(key.name, key.unique, key.columns, keyPrefixes(key));
       }
       return this.textResult(['Table', 'Non_unique', 'Key_name', 'Seq_in_index', 'Column_name', 'Collation',
         'Cardinality', 'Sub_part', 'Packed', ...(mysql5 ? ['Null', 'Index_type', 'Comment', 'Index_comment'] : ['Comment'])],
       rows, table);
     }
 
+    // What a 5.5 server says of a table: its engine, row format, row count,
+    // next auto_increment value (null without one) and collation.
+    tableStatus(entry, table) {
+      const definition = this.definition(entry, table);
+      const autoIncrement = definition.columns.find(column => column.autoIncrement);
+      const engine = definition.engine || 'InnoDB';
+      const charset = definition.charset || this.charset;
+      return {
+        rows: entry.db.exec(`SELECT count(*) FROM ${quoteIdent(table)}`)[0].values[0][0],
+        autoIncrement: autoIncrement
+          ? String(entry.db.exec(`SELECT IFNULL(MAX(${quoteIdent(autoIncrement.name)}), 0) + 1 FROM ${quoteIdent(table)}`)[0].values[0][0])
+          : null,
+        engine,
+        rowFormat: engine.toLowerCase() === 'innodb' ? 'Compact' : 'Dynamic',
+        collation: definition.collation || collationOf(charset, false),
+      };
+    }
+
     showTableStatus(link, like, database = null) {
       const entry = database ? this.databases.get(database) : this.database(link);
       const mysql5 = majorVersion(this.serverVersion) >= 5;
       const rows = this.tableNames(entry).filter(like).map(table => {
-        const count = entry.db.exec(`SELECT count(*) FROM ${quoteIdent(table)}`)[0].values[0][0];
-        const definition = this.definition(entry, table);
-        const autoIncrement = definition.columns.find(column => column.autoIncrement);
-        const next = autoIncrement
-          ? String(entry.db.exec(`SELECT IFNULL(MAX(${quoteIdent(autoIncrement.name)}), 0) + 1 FROM ${quoteIdent(table)}`)[0].values[0][0])
-          : null;
+        const status = this.tableStatus(entry, table);
         if (!mysql5) {
-          return [table, 'MyISAM', 'Dynamic', String(count), '0', '0', '0', '0', '0', next, null, null, null, '', ''];
+          return [table, 'MyISAM', 'Dynamic', String(status.rows), '0', '0', '0', '0', '0', status.autoIncrement, null, null, null, '', ''];
         }
-        const engine = definition.engine || 'InnoDB';
-        const charset = definition.charset || this.charset;
-        return [table, engine, '10', engine.toLowerCase() === 'innodb' ? 'Compact' : 'Dynamic', String(count),
-          '0', '0', '0', '0', '0', next, null, null, null,
-          definition.collation || collationOf(charset, false), null, '', ''];
+        return [table, status.engine, '10', status.rowFormat, String(status.rows),
+          '0', '0', '0', '0', '0', status.autoIncrement, null, null, null,
+          status.collation, null, '', ''];
       });
       if (!mysql5) {
         return this.textResult(['Name', 'Type', 'Row_format', 'Rows', 'Avg_row_length', 'Data_length',
@@ -2738,7 +2955,12 @@
         lines.push(`  PRIMARY KEY (${definition.primaryKey.join(',')})`);
       }
       for (const key of definition.keys) {
-        lines.push(`  ${key.unique ? 'UNIQUE ' : ''}KEY ${key.name} (${key.columns.join(',')})`);
+        const prefixes = keyPrefixes(key);
+        const columns = key.columns.map((column, i) => {
+          const prefix = reportedPrefix(definition, column, prefixes[i]);
+          return prefix === null ? column : `${column}(${prefix})`;
+        });
+        lines.push(`  ${key.unique ? 'UNIQUE ' : ''}KEY ${key.name} (${columns.join(',')})`);
       }
       const options = majorVersion(this.serverVersion) >= 5
         ? `ENGINE=${definition.engine || 'InnoDB'} DEFAULT CHARSET=${definition.charset || this.charset}`

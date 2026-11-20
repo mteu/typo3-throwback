@@ -18,15 +18,17 @@ here=$(dirname "$(realpath "$0")")
 (cd "$here" && npm ci --no-audit --no-fund --silent)
 
 # Prints the *.php and *.inc files under an unpacked release that the CLI in
-# "${php[@]}" does not parse, one per line, sorted.
+# "${php[@]}" does not parse, one per line, sorted. One CLI per file, as many
+# at once as there are CPUs: a release has up to 3,289 files.
 lint_failures() {
     (
         cd "$1"
-        find . \( -name '*.php' -o -name '*.inc' \) | sort | while read -r file; do
-            if ! "${php[@]}" -l "$file" 2>&1 | grep -q '^No syntax errors'; then
-                echo "$file"
-            fi
-        done
+        # shellcheck disable=SC2016 # expanded by the inner bash, per file
+        find . \( -name '*.php' -o -name '*.inc' \) -print0 \
+            | xargs -0 -n 1 -P "$(nproc)" bash -c \
+                'if ! "${@:1:$#-1}" -l "${!#}" 2>&1 | grep -q "^No syntax errors"; then echo "${!#}"; fi' \
+                lint "${php[@]}" \
+            | sort
     )
 }
 

@@ -41,13 +41,12 @@ const {
   check, finish, client, browser, router, logIn, saveTitle, upload, UPLOADED, visibleText, runScript,
   printProvisionOutput, assertNoPhpErrors, watchRejectedStatements, checkNothingRejected, checkClock,
   checkSecondProvision, checkSourceProtection, checkRestore, checkFreshSessions, checkUploadRestored,
-  USER_AGENT, EDIT_ROOT_PAGE,
+  callPageTree, assertPageTree, checkRawPostControl, utf8Bytes, titleField, USER_AGENT, EDIT_ROOT_PAGE,
 } = require('./stack.cjs');
 const assert = require('assert');
-const fs = require('fs');
 const path = require('path');
 const { readForm } = require('./forms.cjs');
-const { bootRelease, repoRoot } = require('./release-site.cjs');
+const { bootRelease } = require('./release-site.cjs');
 
 const workRoot = path.resolve(process.argv[2]);
 
@@ -56,46 +55,7 @@ const CHARSET_PROBE = 'Skaarhøj · Gödöllő · 日本語';
 // The title the record editor saves, so that the frontend and the page tree
 // show a value TCEmain wrote, not one provision.php did.
 const CHARSET_PROBE_SAVED = 'Skaarhøj · Gödöllő · 日本語 · gespeichert';
-// Responses are read as latin1, one char per byte, so UTF-8 text is compared
-// as its bytes.
-const utf8Bytes = text => Buffer.from(text, 'utf8').toString('latin1');
-// The record editor's title, as the hidden field the form posts carries it.
-const titleField = response => (response.text.match(/name="data\[pages\]\[1\]\[title\]" value="([^"]*)"/) || [])[1];
 const urlEncoded = fields => fields.map(([name, value]) => `${encodeURIComponent(name)}=${encodeURIComponent(value)}`).join('&');
-// 4.5/ci-extdirect.sh's call_page_tree: the backend's own page tree asking
-// for the level below the virtual root, as raw JSON, with the token
-// backend.php hands its Ext.Direct calls as the last data item.
-const PAGE_TREE_QUERY = 'ajaxID=ExtDirect::route&namespace=TYPO3.Components.PageTree';
-function callPageTree(send, token) {
-  return send('typo3/ajax.php', {
-    method: 'POST',
-    query: PAGE_TREE_QUERY,
-    headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
-    body: JSON.stringify({ action: 'DataProvider', method: 'getNextTreeLevel', data: ['root', { id: 'root' }, token], type: 'rpc', tid: 1 }),
-  });
-}
-// 4.5/ci-check-page-tree.py: valid JSON, one rpc reply, one mount for an
-// admin, the site, and the seeded page below it with the given title, which
-// json_encode() has escaped as \uXXXX on the way.
-function assertPageTree(response, title) {
-  let replies;
-  try {
-    replies = JSON.parse(Buffer.from(response.body).toString('utf8'));
-  } catch (error) {
-    assert.fail(`the Ext.Direct reply is not JSON (${error.message}); it begins: ${response.text.slice(0, 300)}`);
-  }
-  assert.ok(Array.isArray(replies) && replies.length === 1, `expected one Ext.Direct reply, got: ${response.text.slice(0, 300)}`);
-  const [reply] = replies;
-  assert.strictEqual(reply.type, 'rpc', `the router answered ${reply.type}: ${reply.message}`);
-  assert.ok(Array.isArray(reply.result) && reply.result.length === 1, 'expected one tree mount for an admin');
-  const [mount] = reply.result;
-  assert.strictEqual(mount.editableText, 'TYPO3 4.5.40');
-  assert.ok((mount.children || []).map(child => child.editableText).includes(title),
-    `the seeded page is not below the mount as ${title}`);
-}
-// PHP 5.6's deprecation for a POST body no handler reads, which every
-// Ext.Direct call is.
-const RAW_POST_DEPRECATION = 'Automatically populating $HTTP_RAW_POST_DATA';
 
 (async () => {
   const steps = [];
@@ -116,7 +76,8 @@ const RAW_POST_DEPRECATION = 'Automatically populating $HTTP_RAW_POST_DATA';
     printProvisionOutput(site, booted);
     steps.push(['done', booted]);
     console.log(`     boot steps, ms from the start: ${steps.map(([text, ms]) => `${ms} ${text}`).join('; ')}`);
-    assert.match(output, /^\[provision\] connected to MySQL 5\.5\.62 \(client 3\.23\.49\)\n/);
+    // PHP 5's client is the shim's 5.5 API, mysqli's too.
+    assert.match(output, /^\[provision\] connected to MySQL 5\.5\.62 \(client 5\.5\.62\)\n/);
     for (const charset of ['server', 'connection', 'database']) {
       assert.match(output, new RegExp(`\\[provision\\] ${charset} charset: utf8\\n`));
     }
@@ -257,53 +218,12 @@ const RAW_POST_DEPRECATION = 'Automatically populating $HTTP_RAW_POST_DATA';
     const response = callPageTree(admin, extDirectToken);
     assert.strictEqual(response.status, 200);
     assert.match(response.header('Content-Type'), /^application\/json; *charset=utf-8$/i);
-    assertPageTree(response, probeText);
+    assertPageTree(response, 'TYPO3 4.5.40', probeText);
     assertNoPhpErrors(response);
   });
 
-  // The job's phases 2 and 3, each on an instance booted from this site's
-  // snapshot with every display PHP has, as the job's conf.d file sets them.
-  // The admin's session is in the snapshot, so its cookie and token carry
-  // over, as they do across the job's Apache restarts. expose_php is on in
-  // both: here nothing can answer under stale settings, and phase 3's reply
-  // losing X-Powered-By is the job's last finding.
-  const shipped = fs.readFileSync(path.join(repoRoot, site.release.ini), 'latin1');
-  assert.match(shipped, /^always_populate_raw_post_data = -1$/m);
-  const snapshot = site.snapshot();
-  const controlCall = async rawPostSetting => {
-    const control = await bootRelease('4.5.40', workRoot, {
-      snapshot,
-      legacyIni: Buffer.from(`${shipped.replace(/^always_populate_raw_post_data = .*$/m, `always_populate_raw_post_data = ${rawPostSetting}`)}
-expose_php = On
-error_reporting = E_ALL
-display_errors = On
-display_startup_errors = On
-html_errors = Off
-`, 'latin1'),
-    });
-    const settings = runScript(control, 'settings.php', ['<?php', "echo ini_get('always_populate_raw_post_data'), '|', ini_get('display_startup_errors');"]);
-    assert.strictEqual(settings.text, `${rawPostSetting}|1`);
-    const send = (urlPath, options) => client(control)(urlPath, {
-      ...options, headers: { Cookie: `be_typo_user=${admin.cookie('be_typo_user')}`, ...options.headers },
-    });
-    return callPageTree(send, extDirectToken);
-  };
-  const displayed = await controlCall(-1);
-  check('with every display on and the shipped -1, the reply is still the page tree, with no deprecation', () => {
-    assert.strictEqual(displayed.status, 200);
-    assert.ok(!displayed.text.includes(RAW_POST_DEPRECATION), 'the deprecation appeared');
-    assert.ok(displayed.header('X-Powered-By'), 'this reply was not served under the control settings');
-    assertPageTree(displayed, probeText);
-    assert.deepStrictEqual(displayed.log, []);
-  });
-  const broken = await controlCall(0);
-  check('with always_populate_raw_post_data = 0, the deprecation leads the reply, breaks the JSON and costs PHP its headers', () => {
-    assert.ok(broken.text.trimStart().startsWith(`Deprecated: ${RAW_POST_DEPRECATION}`), `the reply begins: ${broken.text.slice(0, 200)}`);
-    assert.throws(() => JSON.parse(broken.text), SyntaxError);
-    assert.ok(!broken.header('X-Powered-By'), 'X-Powered-By survived the deprecation');
-    assert.ok(broken.log.some(line => line.includes('Cannot modify header information - headers already sent')),
-      'PHP did not log that its headers were lost');
-  });
+  // The job's phases 2 and 3.
+  await checkRawPostControl(site, workRoot, `be_typo_user=${admin.cookie('be_typo_user')}`, extDirectToken, 'TYPO3 4.5.40', probeText);
 
   // --- the job's "Behind TLS" step --------------------------------------
 

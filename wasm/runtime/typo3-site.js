@@ -6,8 +6,8 @@
 //   unpack the release archive and make the Dockerfile's source edits, with
 //     the same assertions
 //   assemble the document root the way the Dockerfile does
-//   provision with the stack's own provision.php on first boot, or restore a
-//     snapshot
+//   provision on first boot as the stack's entrypoint does, with its own
+//     provision.php, and for 6.2 its installer, or restore a snapshot
 //   serve files and PHP with the web server's rules, and keep the cookies
 //
 // It touches nothing but the runtime's FS and request(), so it runs in a
@@ -24,6 +24,8 @@
   const WEB_ROOT = '/var/www';
   const PROVISION_SCRIPT = '/opt/provision/provision.php';
   const UPLOAD_DIR = '/tmp/uploads';
+  // How many steps TYPO3 6.2's installer has, for the progress bar only.
+  const INSTALLER_STEPS = 5;
 
   const CONTENT_TYPES = {
     html: 'text/html', htm: 'text/html', txt: 'text/plain', css: 'text/css',
@@ -105,6 +107,8 @@
     //   tarball: the release archive, already gunzipped, as bytes
     //   provisionScript, legacyIni: the files release.provisionScript and
     //     release.ini name, as bytes
+    //   StepInstaller: runtime/step-installer.js, for a release whose
+    //     provisioning runs TYPO3's own installer
     //   urlPrefix: the URL path the site is served under, such as "/3.3/site"
     //   clockStartMs: where PHP's and the server's clock start, in
     //     milliseconds since the epoch, or null for today. Defaults to the
@@ -135,7 +139,7 @@
       this.restored = false;
     }
 
-    async start({ PhpRuntime, createPhp, MysqlOnSqlite, SQL, readTar, tarball, provisionScript, legacyIni, snapshot = null, clockStartMs = this.release.clockStartMs, database = true }) {
+    async start({ PhpRuntime, createPhp, MysqlOnSqlite, SQL, readTar, tarball, provisionScript, legacyIni, StepInstaller = null, snapshot = null, clockStartMs = this.release.clockStartMs, database = true }) {
       const release = this.release;
       const restorable = database && snapshot && snapshot.version === release.snapshotVersion;
       const clock = clockStartMs === null ? null : PhpRuntime.clockStartingAt(clockStartMs);
@@ -150,6 +154,10 @@
         });
         if (restorable) {
           this.mysql.addDatabase('typo3', snapshot.database);
+        } else if (release.mysqlDatabase) {
+          // The database the server's image creates on its first start, as
+          // the official mysql image does for MYSQL_DATABASE.
+          this.mysql.addDatabase(release.mysqlDatabase);
         }
       }
       // The stack's own ini, with the log routed to the SAPI and uploads to /tmp.
@@ -183,13 +191,36 @@
         if (!release.provisionScript) {
           throw new Error(`TYPO3 ${release.release} cannot provision a site in the browser yet`);
         }
-        this.progress(`provisioning with ${release.provisionScript}`, 0.6);
         FS.mkdirTree(PROVISION_SCRIPT.replace(/\/[^/]*$/, ''));
         FS.writeFile(PROVISION_SCRIPT, provisionScript);
-        const response = this.provision();
-        this.provisionOutput = response.text;
-        if (!/\[provision\] done\n$/.test(response.text)) {
-          throw new Error(`provision.php did not finish:\n${response.text}\n${response.log.join('\n')}`);
+        this.provisionOutput = '';
+        this.installerSteps = null;
+        this.provisionLog = [];
+        const steps = release.provisionSteps || [{ argv: null, done: /\[provision\] done\n$/ }];
+        for (const [index, step] of steps.entries()) {
+          const share = 0.6 + (0.4 * index) / steps.length;
+          if (step.installer) {
+            if (!StepInstaller) {
+              throw new Error(`TYPO3 ${release.release} provisions with its installer, and no StepInstaller was given`);
+            }
+            // A worker's messages reach the page while it runs, so each
+            // step shows as it starts.
+            const result = StepInstaller.install(this, this.provisionEnv(), (number, action) => {
+              this.progress(`running the TYPO3 ${release.release} installer, step ${number}: ${action}`,
+                share + (0.4 / steps.length) * ((number - 1) / INSTALLER_STEPS));
+            });
+            this.provisionOutput += result.log;
+            this.installerSteps = result.steps;
+            this.provisionLog.push(...result.phpLog);
+            continue;
+          }
+          this.progress(`provisioning with ${release.provisionScript}${step.argv ? ` ${step.argv.join(' ')}` : ''}`, share);
+          const response = this.provision(step.argv);
+          this.provisionOutput += response.text;
+          this.provisionLog.push(...response.log);
+          if (!step.done.test(response.text)) {
+            throw new Error(`provision.php did not finish:\n${this.provisionOutput}\n${response.log.join('\n')}`);
+          }
         }
         if (release.afterProvision) {
           release.afterProvision(sql => this.query(sql));
@@ -198,12 +229,19 @@
       this.savedWrites = this.mysql ? this.mysql.writes : 0;
     }
 
+    provisionEnv() {
+      return this.release.provisionEnv({ source: this.source, docroot: this.docroot });
+    }
+
     // Runs the stack's provision.php, as its entrypoint does on every boot.
-    provision() {
+    // argv: its arguments, for a script that reads them as the CLI gives
+    // them, or null.
+    provision(argv = null) {
       return this.php.request({
         scriptFilename: PROVISION_SCRIPT,
         scriptName: '/provision.php',
-        server: this.release.provisionEnv({ source: this.source, docroot: this.docroot }),
+        server: this.provisionEnv(),
+        ...(argv ? { argv } : {}),
       });
     }
 
@@ -249,13 +287,17 @@
       for (const [path, text] of Object.entries(this.release.docrootFiles || {})) {
         FS.writeFile(`${root}/${path}`, encoder.encode(text));
       }
-      FS.writeFile(`${root}/typo3conf/localconf.php`, encoder.encode(['<?php', ...this.release.localconf, '?>', ''].join('\n')));
+      if (this.release.localconf) {
+        FS.writeFile(`${root}/typo3conf/localconf.php`, encoder.encode(['<?php', ...this.release.localconf, '?>', ''].join('\n')));
+      }
     }
 
     // request: { method, path, query, headers: { name: value }, body: Uint8Array | null, https }
     // path is the URL path, query the part after "?" without it. https is
-    // true when the page asked over HTTPS.
-    handle({ method = 'GET', path, query = '', headers = {}, body = null, https = false }) {
+    // true when the page asked over HTTPS. cookies: the jar to send from and
+    // keep into, the site's own unless a client keeps its own, as the
+    // installer does.
+    handle({ method = 'GET', path, query = '', headers = {}, body = null, https = false }, cookies = this.cookies) {
       if (path === this.urlPrefix) {
         // The site root is a directory: without its slash, relative URLs such
         // as clear.gif would resolve one level up.
@@ -289,7 +331,7 @@
         for (const index of ['index.php', 'index.html']) {
           const candidate = this.stat(`${file}${index}`);
           if (candidate && !FS.isDir(candidate.mode)) {
-            return this.serve(`${relative}${index}`, { method, query, headers, body, https });
+            return this.serve(`${relative}${index}`, { method, query, headers, body, https }, cookies);
           }
         }
         return plainResponse(403, 'Forbidden');
@@ -297,7 +339,7 @@
       if (!stat) {
         return plainResponse(404, 'Not Found');
       }
-      return this.serve(relative, { method, query, headers, body, https });
+      return this.serve(relative, { method, query, headers, body, https }, cookies);
     }
 
     stat(path) {
@@ -308,7 +350,7 @@
       }
     }
 
-    serve(relative, { method, query, headers, body, https }) {
+    serve(relative, { method, query, headers, body, https }, cookies) {
       const file = `${this.docroot}${relative}`;
       if (!relative.endsWith('.php')) {
         const extension = (relative.match(/\.([a-z0-9]+)$/i) || [])[1];
@@ -319,7 +361,7 @@
         };
       }
       const scriptName = `${this.urlPrefix}${relative}`;
-      const cookie = this.cookies.header(scriptName);
+      const cookie = cookies.header(scriptName);
       const response = this.php.request({
         method,
         scriptFilename: file,
@@ -335,7 +377,7 @@
       const out = [];
       for (const [name, value] of response.headers) {
         if (name.toLowerCase() === 'set-cookie') {
-          this.cookies.store(value, scriptName);
+          cookies.store(value, scriptName);
         } else {
           out.push([name, value]);
         }
