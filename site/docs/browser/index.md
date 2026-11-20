@@ -14,7 +14,7 @@ install.
 | ![](../assets/marks/mark2-sheets-2003.png){ .mark } [3.8.1](3.8.md) | [open it](../../3.8/) |
 | ![](../assets/marks/mark3-orange-green-4x.png){ .mark } [4.0.13](4.0.md) | [open it](../../4.0/) |
 | ![](../assets/marks/mark4-orange-2012.png){ .mark } [4.5.40](4.5.md) | [open it](../../4.5/) |
-| ![](../assets/marks/mark4-orange-2012.png){ .mark } 6.2.31 | not yet |
+| ![](../assets/marks/mark4-orange-2012.png){ .mark } [6.2.31](6.2.md) | [open it](../../6.2/) |
 
 ## What WebAssembly does
 
@@ -38,8 +38,9 @@ what the page hands it.
   here. Each release runs on one of them, and your browser downloads only
   that one.
 - **The database is SQLite, answering as the MySQL each release expects.**
-  TYPO3 talks to PHP's own, unmodified `mysql` extension. Underneath, a small
-  client library answers its calls from SQLite, also compiled to WebAssembly.
+  TYPO3 talks to PHP's own, unmodified `mysql` or `mysqli` extension.
+  Underneath, a small client library answers its calls from SQLite, also
+  compiled to WebAssembly.
 
     | TYPO3 | PHP | Answers as |
     | --- | --- | --- |
@@ -47,6 +48,7 @@ what the page hands it.
     | 3.8.1 | 4.4.9 | MySQL 3.23.49 |
     | 4.0.13 | 4.4.9 | MySQL 5.5.62, latin1, the server of its Docker stack |
     | 4.5.40 | 5.6.40 | MySQL 5.5.62, UTF-8, the server of its Docker stack |
+    | 6.2.31 | 5.6.40 | MySQL 5.5.62, UTF-8, the server of its Docker stack |
 
 - **A service worker carries each request to PHP.** Your browser asks for a
   page as usual. The service worker hands the request to PHP, running in a
@@ -64,9 +66,10 @@ what the page hands it.
 
 - **Images: GD, yes. ImageMagick, no.** PHP's bundled GD draws the menus, with
   FreeType for text, and writes GIF, PNG and JPEG. ImageMagick is a separate
-  program, and a page cannot start programs. TYPO3 has a setting for a server
-  without it, and uses it. Images are served at their own size, because
-  scaling needs ImageMagick.
+  program, and a page cannot start programs. Up to 4.5, TYPO3 has a setting
+  for a server without it, and the site uses it. Images are served at their
+  own size, because scaling needs ImageMagick. 6.2 keeps ImageMagick on, as
+  its Docker stack does, and what needs it fails here as it fails there.
 - **Uploads work.** Files go into `fileadmin/` through TYPO3's own file module,
   and are saved with the rest of the site. TYPO3 refuses `.php` files itself.
 - **No other programs.** Anything TYPO3 would do by starting a program, such as

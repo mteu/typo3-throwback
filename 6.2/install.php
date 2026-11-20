@@ -28,6 +28,10 @@
  *
  * Plain PHP streams rather than ext/curl, so that it depends on nothing the image
  * does not need anyway. PHP 5.6 syntax, because it runs on the image's PHP.
+ *
+ * wasm/runtime/step-installer.js is its twin for the site in a browser tab: the
+ * same steps, values, checks and log lines, sent through the site's request loop
+ * instead of loopback. A change to one belongs in the other.
  */
 
 function out($msg) {

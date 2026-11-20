@@ -31,7 +31,7 @@ if (!/^\d+\.\d+\.\d+$/.test(releaseName) || !/^(\/[\w.-]+)*\/site$/.test(urlPref
   throw new Error('the shell must name a release and its site path');
 }
 importScripts(...['runtime/php-runtime.js', 'runtime/mysql-sqlite.js', 'runtime/tar.js', 'runtime/typo3-site.js',
-  'sql.js/sql-wasm.js', `releases/${releaseName}.js`].map(published));
+  'runtime/step-installer.js', 'sql.js/sql-wasm.js', `releases/${releaseName}.js`].map(published));
 const release = self.Typo3Releases[releaseName];
 const inPhpBuild = file => published(`php-${release.php}/${file}`);
 importScripts(inPhpBuild('php.js'));
@@ -157,6 +157,7 @@ async function boot() {
     tarball,
     provisionScript,
     legacyIni,
+    StepInstaller,
     urlPrefix,
     snapshot: snapshot || null,
     onProgress: (text, share) => progress(text, share === undefined ? undefined : GUNZIP_END + BOOT_SHARE * share),

@@ -11,6 +11,10 @@
 //   login form, filled in and submitted, logs in, and every module in the
 //   menu loads: a frameset whose frames call top.goToModule() up to 4.0, an
 //   ExtJS viewport from 4.5 (spec.backend)
+//   the form's own JavaScript posts something other than the typed password:
+//   from 6.2, rsaauth's encryption of it (spec.loginUserident)
+//   a module throws no JavaScript error, but those the release throws in any
+//   browser (spec.moduleErrors)
 //   the page title is renamed in alt_doc.php, and the frontend shows it
 //   a file uploaded through the backend's form lands in fileadmin/ byte for
 //   byte, and a .php upload is refused
@@ -85,7 +89,8 @@ async function check(label, test) {
   context.on('page', opened => {
     opened.on('pageerror', error => {
       pageErrors.push(`${opened.url()}: ${error.message}`);
-      console.log(`     page error: ${error.message}`);
+      const where = (String(error.stack).split('\n').find(line => /^\s+at /.test(line)) || '').trim();
+      console.log(`     page error: ${error.message}${where ? ` (${where})` : ''}`);
     });
     // sw.js's Content-Security-Policy must not block anything the release does.
     opened.on('console', message => {
@@ -150,12 +155,13 @@ async function check(label, test) {
     assert.deepStrictEqual(results.filter(([, code]) => code !== 200), []);
   };
 
-  // The text of a file list (file_list.php) in any frame of the backend tab
-  // once it names the file.
-  const fileListShowing = async name => (await backend.waitForFunction(fileName => {
+  // The text of a file list in any frame of the backend tab once it names
+  // the file: file_list.php, or what spec.backend.fileListShown matches in
+  // the frame's path and query.
+  const fileListShowing = async name => (await backend.waitForFunction(({ fileName, fileList }) => {
     const lists = [];
     const walk = win => {
-      if (/\/file_list\.php$/.test(win.location.pathname) && win.document.readyState === 'complete' && win.document.body) {
+      if (new RegExp(fileList).test(win.location.pathname + win.location.search) && win.document.readyState === 'complete' && win.document.body) {
         lists.push(win.document.body.innerText);
       }
       for (let i = 0; i < win.frames.length; i++) {
@@ -164,7 +170,26 @@ async function check(label, test) {
     };
     walk(window);
     return lists.find(text => text.includes(fileName));
-  }, name, { timeout: 60000 })).jsonValue();
+  }, { fileName: name, fileList: (spec.backend.fileListShown || /\/file_list\.php(\?|$)/).source }, { timeout: 60000 })).jsonValue();
+
+  // Opens file_upload.php for fileadmin/ in the content frame and puts each
+  // file in an input of its own, up to 4.5. returnUrl is where 3.8.1 and
+  // later send the browser after the upload. 3.3.0's form has no such
+  // parameter, and ignores it. fileadmin: the mount as PHP sees it.
+  const chooseUploads = async ({ backend: tab, fileadmin, files }) => {
+    await tab.evaluate(({ contentFrame, target, fileList }) => {
+      document.querySelector(contentFrame).contentWindow.location.href = `file_upload.php?number=2&target=${encodeURIComponent(target)}`
+        + `&returnUrl=${encodeURIComponent(`${fileList}?id=${target}/`)}`;
+    }, { contentFrame: CONTENT_FRAME, target: fileadmin, fileList: spec.backend.fileList });
+    await tab.waitForFunction(contentFrame => {
+      const doc = document.querySelector(contentFrame).contentDocument;
+      return doc.readyState === 'complete' && doc.querySelector('input[type="file"][name="upload_1"]');
+    }, CONTENT_FRAME, { timeout: 30000 });
+    const content = tab.frame({ name: 'content' });
+    for (const [i, file] of files.entries()) {
+      await content.setInputFiles(`input[name="upload_${i}"]`, file);
+    }
+  };
 
   // The uploaded file as the site serves it, from the frontend the iframe shows.
   const servedUpload = () => frame().evaluate(async name => {
@@ -208,9 +233,9 @@ async function check(label, test) {
     await check('every image the frontend names loads', everyFrontendImageLoads);
 
     await check("the web server's rules: source files 403, images 200", async () => {
-      const codes = await frame().evaluate(async () => Promise.all(['typo3conf/localconf.php', 't3lib/class.t3lib_div.php', 'typo3/gfx/refresh_n.gif']
-        .map(async ref => (await fetch(ref)).status)));
-      assert.deepStrictEqual(codes, [403, 403, 200]);
+      const rules = spec.serverRules || [['typo3conf/localconf.php', 403], ['t3lib/class.t3lib_div.php', 403], ['typo3/gfx/refresh_n.gif', 200]];
+      const codes = await frame().evaluate(async refs => Promise.all(refs.map(async ref => (await fetch(ref)).status)), rules.map(([ref]) => ref));
+      assert.deepStrictEqual(codes, rules.map(([, code]) => code));
     });
 
     await check('another site cannot reach site/: a link from elsewhere, or a typed address, gets 403', async () => {
@@ -267,10 +292,10 @@ async function check(label, test) {
           return doc && doc.readyState === 'complete' && /\/site\/$/.test(doc.location.pathname) && doc.body;
         }, null, { timeout: 60000 });
         await other.goto(`${base}/index.html?path=typo3/install/index.php`);
-        await other.waitForFunction(() => {
+        await other.waitForFunction(installTool => {
           const doc = document.getElementById('site').contentDocument;
-          return doc && doc.readyState === 'complete' && /\/site\/typo3\/install\/index\.php$/.test(doc.location.pathname);
-        }, null, { timeout: 60000 });
+          return doc && doc.readyState === 'complete' && new RegExp(installTool).test(doc.location.pathname);
+        }, (spec.installToolLandsOn || /\/site\/typo3\/install\/index\.php$/).source, { timeout: 60000 });
       } finally {
         await other.close();
       }
@@ -299,13 +324,27 @@ async function check(label, test) {
         page.click('nav button[data-path="typo3/index.php"]'),
       ]);
       await backend.waitForSelector('input[name="p_field"]');
+      // What the form's own JavaScript posts in place of the typed password.
+      const posted = [];
+      backend.on('request', request => {
+        if (request.method() === 'POST' && /\/typo3\/index\.php$/.test(new URL(request.url()).pathname)) {
+          posted.push(new URLSearchParams(request.postData() || ''));
+        }
+      });
       await backend.fill('input[name="username"]', 'admin');
       await backend.fill('input[name="p_field"]', 'password');
+      const started = Date.now();
       await Promise.all([
         backend.waitForURL(spec.backend.landsOn, { timeout: 30000 }),
         backend.click('input[name="commandLI"]'),
       ]);
+      console.log(`     logged in after ${Date.now() - started} ms`);
       await spec.backend.assertLoaded(backend);
+      assert.strictEqual(posted.length, 1);
+      assert.strictEqual(posted[0].get('p_field'), '', 'the typed password was posted');
+      if (spec.loginUserident) {
+        assert.match(posted[0].get('userident'), spec.loginUserident);
+      }
     });
 
     await check('a module in the menu loads: Web > Page', async () => {
@@ -330,7 +369,10 @@ async function check(label, test) {
       const modules = await spec.backend.menuModules(backend);
       const local = modules.filter(name => !spec.remoteModules.includes(name));
       const broken = [];
+      // The errors a release's own module throws in any browser, by module.
+      const known = spec.moduleErrors || {};
       for (const name of local) {
+        const errorsBefore = pageErrors.length;
         await spec.backend.openModule(backend, name);
         await backend.waitForTimeout(500);
         await backend.waitForFunction(() => {
@@ -344,6 +386,12 @@ async function check(label, test) {
           walk(window);
           return !pending.includes(true);
         }, null, { timeout: 30000 });
+        if (known[name]) {
+          const thrown = pageErrors.splice(errorsBefore);
+          assert.ok(thrown.some(error => known[name].test(error)), `${name} no longer throws ${known[name]}`);
+          pageErrors.push(...thrown.filter(error => !known[name].test(error)));
+          console.log(`     expected, from ${releaseName}'s own ${name}: ${known[name].source}`);
+        }
         for (const frame of backend.frames()) {
           const text = await frame.evaluate(() => (document.body ? document.body.innerText : '')).catch(() => '');
           const problem = text.match(/(Fatal error|Parse error|Warning|Notice): .{0,120}/);
@@ -386,21 +434,11 @@ async function check(label, test) {
       // The fileadmin/ mount as PHP sees it: runtime/typo3-site.js puts the
       // document root at /var/www plus the site's URL path.
       const fileadmin = `/var/www${new URL(base).pathname}/site/fileadmin`;
-      // returnUrl is where 3.8.1 and later send the browser after the
-      // upload. 3.3.0's form has no such parameter, and ignores it.
-      await backend.evaluate(({ contentFrame, target, fileList }) => {
-        document.querySelector(contentFrame).contentWindow.location.href = `file_upload.php?number=2&target=${encodeURIComponent(target)}`
-          + `&returnUrl=${encodeURIComponent(`${fileList}?id=${target}/`)}`;
-      }, { contentFrame: CONTENT_FRAME, target: fileadmin, fileList: spec.backend.fileList });
-      await backend.waitForFunction(contentFrame => {
-        const doc = document.querySelector(contentFrame).contentDocument;
-        return doc.readyState === 'complete' && doc.querySelector('input[type="file"][name="upload_1"]');
-      }, CONTENT_FRAME, { timeout: 30000 });
+      await (spec.chooseUploads || chooseUploads)({ backend, fileadmin, files: [
+        { name: UPLOAD_NAME, mimeType: 'application/octet-stream', buffer: UPLOAD_BYTES },
+        { name: 'uploaded.php', mimeType: 'text/plain', buffer: Buffer.from('<?php echo "uploaded code ran"; ?>') },
+      ] });
       const content = backend.frame({ name: 'content' });
-      await content.setInputFiles('input[name="upload_0"]', { name: UPLOAD_NAME, mimeType: 'application/octet-stream', buffer: UPLOAD_BYTES });
-      await content.setInputFiles('input[name="upload_1"]', {
-        name: 'uploaded.php', mimeType: 'text/plain', buffer: Buffer.from('<?php echo "uploaded code ran"; ?>'),
-      });
       // What TYPO3 says about the two files, and its list of fileadmin/
       // afterwards. The list, not a fetch, shows the .php file is not there:
       // the web server's rule answers 403 for any .php under fileadmin/,

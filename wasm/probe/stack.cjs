@@ -15,8 +15,10 @@ process.env.TZ = 'Asia/Tokyo';
 
 const assert = require('assert');
 const crypto = require('crypto');
+const fs = require('fs');
+const path = require('path');
 const { readForm, multipart } = require('./forms.cjs');
-const { bootRelease } = require('./release-site.cjs');
+const { bootRelease, repoRoot } = require('./release-site.cjs');
 
 // The User-Agent CI sends: 3.3 refuses anything it does not take for a "4+ browser".
 const USER_AGENT = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36';
@@ -25,6 +27,9 @@ const USER_AGENT = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, l
 const PHP_ERROR_OUTPUT = /(Deprecated|Notice|Warning|Fatal error|Parse error|Strict Standards|Catchable fatal error)(<\/b>)?: .* on line (<b>)?[0-9]/;
 
 const md5 = text => crypto.createHash('md5').update(text, 'latin1').digest('hex');
+// Responses are read as latin1, one char per byte, so UTF-8 text is compared
+// as its bytes.
+const utf8Bytes = text => Buffer.from(text, 'utf8').toString('latin1');
 const BOUNDARY = 'probeboundary';
 const urlEncoded = fields => fields.map(([name, value]) => `${encodeURIComponent(name)}=${encodeURIComponent(value)}`).join('&');
 const visibleText = response => response.text.replace(/<[^>]+>/g, ' ').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ');
@@ -32,6 +37,8 @@ const visibleText = response => response.text.replace(/<[^>]+>/g, ' ').replace(/
 // say: with fewer than two GET vars alt_doc.php redirects to the last open
 // document.
 const EDIT_ROOT_PAGE = 'returnUrl=db_layout.php%3Fid%3D1&edit%5Bpages%5D%5B1%5D=edit';
+// The record editor's title, as the hidden field the form posts carries it.
+const titleField = response => (response.text.match(/name="data\[pages\]\[1\]\[title\]" value="([^"]*)"/) || [])[1];
 
 let failures = 0;
 function check(label, test) {
@@ -88,12 +95,13 @@ function browser(site) {
 
 // Requests through the site's own router and cookie jar, as sw.js sends
 // them: over HTTPS when https is set, as on the public site. Takes the same
-// options as client(), but for query.
+// options as client().
 function router(site, { https = false } = {}) {
-  return (urlPath, { headers = {}, method = 'GET', body = null } = {}) => {
+  return (urlPath, { query = '', headers = {}, method = 'GET', body = null } = {}) => {
     const response = site.handle({
       method,
       path: `/${urlPath}`,
+      query,
       headers: { Host: 'localhost', 'User-Agent': USER_AGENT, ...headers },
       body: body && Buffer.from(body, 'latin1'),
       https,
@@ -320,6 +328,92 @@ function checkFreshSessions(site, admin) {
   });
 }
 
+// --- the ExtJS backends, 4.5 and 6.2 ----------------------------------------
+
+// The jobs' call_page_tree (4.5/ci-extdirect.sh, 6.2/ci-extdirect.sh): the
+// backend's own page tree asking for the level below the virtual root, as
+// raw JSON, with the token backend.php hands its Ext.Direct calls as the
+// last data item. send is a client or a router.
+function callPageTree(send, token) {
+  return send('typo3/ajax.php', {
+    method: 'POST',
+    query: 'ajaxID=ExtDirect::route&namespace=TYPO3.Components.PageTree',
+    headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+    body: JSON.stringify({ action: 'DataProvider', method: 'getNextTreeLevel', data: ['root', { id: 'root' }, token], type: 'rpc', tid: 1 }),
+  });
+}
+
+// The jobs' ci-check-page-tree.py: valid JSON, one rpc reply, one mount for
+// an admin, the site, and the seeded page below it with the given title,
+// which json_encode() has escaped as \uXXXX on the way.
+function assertPageTree(response, siteName, title) {
+  let replies;
+  try {
+    replies = JSON.parse(Buffer.from(response.body).toString('utf8'));
+  } catch (error) {
+    assert.fail(`the Ext.Direct reply is not JSON (${error.message}); it begins: ${response.text.slice(0, 300)}`);
+  }
+  assert.ok(Array.isArray(replies) && replies.length === 1, `expected one Ext.Direct reply, got: ${response.text.slice(0, 300)}`);
+  const [reply] = replies;
+  assert.strictEqual(reply.type, 'rpc', `the router answered ${reply.type}: ${reply.message}`);
+  assert.ok(Array.isArray(reply.result) && reply.result.length === 1, 'expected one tree mount for an admin');
+  const [mount] = reply.result;
+  assert.strictEqual(mount.editableText, siteName);
+  assert.ok((mount.children || []).map(child => child.editableText).includes(title),
+    `the seeded page is not below the mount as ${title}`);
+}
+
+// PHP 5.6's deprecation for a POST body no handler reads, which every
+// Ext.Direct call is.
+const RAW_POST_DEPRECATION = 'Automatically populating $HTTP_RAW_POST_DATA';
+
+// The jobs' phases 2 and 3 of their Ext.Direct step, each on an instance
+// booted from the site's snapshot with every display PHP has, as the job's
+// conf.d file sets them. The admin's session is in the snapshot, so its
+// cookie and token carry over, as they do across the job's Apache
+// restarts. expose_php is on in both: here nothing can answer under stale
+// settings, and phase 3's reply losing X-Powered-By is the job's last
+// finding. siteName and title: what the page tree must show.
+async function checkRawPostControl(site, workRoot, sessionCookie, token, siteName, title) {
+  const shipped = fs.readFileSync(path.join(repoRoot, site.release.ini), 'latin1');
+  assert.match(shipped, /^always_populate_raw_post_data = -1$/m);
+  const snapshot = site.snapshot();
+  const controlCall = async rawPostSetting => {
+    const control = await bootRelease(site.release.release, workRoot, {
+      snapshot,
+      legacyIni: Buffer.from(`${shipped.replace(/^always_populate_raw_post_data = .*$/m, `always_populate_raw_post_data = ${rawPostSetting}`)}
+expose_php = On
+error_reporting = E_ALL
+display_errors = On
+display_startup_errors = On
+html_errors = Off
+`, 'latin1'),
+    });
+    const settings = runScript(control, 'settings.php', ['<?php', "echo ini_get('always_populate_raw_post_data'), '|', ini_get('display_startup_errors');"]);
+    assert.strictEqual(settings.text, `${rawPostSetting}|1`);
+    const send = (urlPath, options) => client(control)(urlPath, {
+      ...options, headers: { Cookie: sessionCookie, ...options.headers },
+    });
+    return callPageTree(send, token);
+  };
+  const displayed = await controlCall(-1);
+  check('with every display on and the shipped -1, the reply is still the page tree, with no deprecation', () => {
+    assert.strictEqual(displayed.status, 200);
+    assert.ok(!displayed.text.includes(RAW_POST_DEPRECATION), 'the deprecation appeared');
+    assert.ok(displayed.header('X-Powered-By'), 'this reply was not served under the control settings');
+    assertPageTree(displayed, siteName, title);
+    assert.deepStrictEqual(displayed.log, []);
+  });
+  const broken = await controlCall(0);
+  check('with always_populate_raw_post_data = 0, the deprecation leads the reply, breaks the JSON and costs PHP its headers', () => {
+    assert.ok(broken.text.trimStart().startsWith(`Deprecated: ${RAW_POST_DEPRECATION}`), `the reply begins: ${broken.text.slice(0, 200)}`);
+    assert.throws(() => JSON.parse(broken.text), SyntaxError);
+    assert.ok(!broken.header('X-Powered-By'), 'X-Powered-By survived the deprecation');
+    assert.ok(broken.log.some(line => line.includes('Cannot modify header information - headers already sent')),
+      'PHP did not log that its headers were lost');
+  });
+}
+
 // Every statement the site's MySQL server answers with an error from now on.
 // TYPO3's database layer mostly swallows errors, so without this a statement
 // the shim cannot translate would only show as a page that is quietly wrong.
@@ -424,9 +518,10 @@ async function checkRestore(site, workRoot, frontendCheck) {
 }
 
 module.exports = {
-  USER_AGENT, EDIT_ROOT_PAGE, md5, visibleText, check, finish, cookiesFrom, client, browser, router, runScript,
+  USER_AGENT, EDIT_ROOT_PAGE, md5, utf8Bytes, titleField, visibleText, check, finish, cookiesFrom, client, browser, router, runScript,
   printProvisionOutput, assertNoPhpErrors, watchRejectedStatements, checkNothingRejected, checkClock,
   checkSecondProvision, checkSourceProtection, checkRestore,
   logIn, checkBackendLogin, checkBackendLoginOverHttps, saveTitle, upload, UPLOADED, checkUploads, checkUploadRestored,
   checkInstallToolImages, checkInstallToolMail, checkFreshSessions,
+  callPageTree, assertPageTree, RAW_POST_DEPRECATION, checkRawPostControl,
 };

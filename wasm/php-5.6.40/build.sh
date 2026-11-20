@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Build PHP 5.6.40 (from vendor-src/, checksum-verified) to WebAssembly, with
-# the extensions TYPO3 4.5.40 needs, and libxml2 2.9.14 (from vendor-src/,
-# checksum-verified) for its XML extensions.
+# the extensions TYPO3 4.5.40 and 6.2.31 need, libxml2 2.9.14 for its XML
+# extensions and OpenSSL 1.0.2u for ext/openssl (both from vendor-src/,
+# checksum-verified). One build serves both releases.
 #
 # Usage: wasm/php-5.6.40/build.sh <repo-root> <work-dir>
 # Needs: an activated emsdk (tested with emcc 7.0.0), node.
@@ -23,6 +24,7 @@ mkdir -p "$work/out/node" "$work/out/web"
 
 (cd "$repo/vendor-src/php-5.6.40" && sha256sum -c SHA256SUMS)
 (cd "$repo/vendor-src/libxml2-2.9.14" && sha256sum -c SHA256SUMS)
+(cd "$repo/vendor-src/openssl-1.0.2u" && sha256sum -c SHA256SUMS)
 
 rm -rf "$work/php-5.6.40"
 tar -xzf "$repo/vendor-src/php-5.6.40/php-5.6.40.tar.gz" -C "$work"
@@ -64,16 +66,35 @@ grep -q '^/\* SUPPORT_JIT: sljit has no wasm32 backend \*/$' ext/pcre/pcrelib/co
 # The scan after make checks that no other such cast is compiled.
 patch -p1 --forward --no-backup-if-mismatch < "$here/function-casts.patch" > "$work/patch.out"
 
-# native/libmysql/: the 3.23 client API, answered by runtime/mysql-sqlite.js,
-# as php-4.4.9/build.sh builds it. Laid out the way ext/mysql/config.m4
-# searches an external client, so PHP's own, unmodified ext/mysql builds
-# against it, not against mysqlnd.
+# native/libmysql/: the 5.5 client API, prepared statements included,
+# answered by runtime/mysql-sqlite.js. The installed header defines
+# WASM_LIBMYSQL_API_55, so ext/mysql and mysqli compile against the view of
+# it the library was built with. Laid out the way ext/mysql/config.m4
+# searches an external client, with a mysql_config for mysqli/config.m4, so
+# PHP's own, unmodified extensions build against it, not against mysqlnd:
+# mysqlnd speaks MySQL's protocol over a socket, which a browser tab does
+# not have.
 mysql_prefix="$work/mysql-client"
 rm -rf "$mysql_prefix"
-mkdir -p "$mysql_prefix/include/mysql" "$mysql_prefix/lib"
-cp "$native/libmysql/mysql.h" "$mysql_prefix/include/mysql/mysql.h"
-emcc -O1 -std=gnu89 -I"$native/libmysql" -c "$native/libmysql/libmysql.c" -o "$work/libmysql.o"
+mkdir -p "$mysql_prefix/include/mysql" "$mysql_prefix/lib" "$mysql_prefix/bin"
+{
+    echo '#define WASM_LIBMYSQL_API_55 1'
+    cat "$native/libmysql/mysql.h"
+} > "$mysql_prefix/include/mysql/mysql.h"
+# mysqli includes seven more headers of a real client. Of what they declare
+# it uses only CHARSET_INFO, which mysql.h declares.
+for header in my_global.h my_sys.h m_ctype.h errmsg.h my_list.h m_string.h mysqld_error.h; do
+    echo '/* Included by mysqli, which uses nothing in it; see mysql.h. */' > "$mysql_prefix/include/mysql/$header"
+done
+emcc -O1 -std=gnu89 -DWASM_LIBMYSQL_API_55 -I"$native/libmysql" -c "$native/libmysql/libmysql.c" -o "$work/libmysql.o"
 emar rcs "$mysql_prefix/lib/libmysqlclient.a" "$work/libmysql.o"
+printf '%s\n' '#!/bin/sh' \
+    'case "$1" in' \
+    "    --cflags) echo '-I$mysql_prefix/include/mysql' ;;" \
+    "    --libs) echo '-L$mysql_prefix/lib -lmysqlclient' ;;" \
+    '    *) exit 1 ;;' \
+    'esac' > "$mysql_prefix/bin/mysql_config"
+chmod +x "$mysql_prefix/bin/mysql_config"
 
 # zlib: Emscripten's port, built into its sysroot, laid out as
 # <dir>/include and <dir>/lib/libz.a for --with-zlib.
@@ -110,6 +131,35 @@ for feature in THREAD HTTP FTP ICONV ICU ZLIB LZMA; do
 done
 test "$("$libxml_prefix/bin/xml2-config" --version)" = 2.9.14
 
+# OpenSSL 1.0.2u, for ext/openssl: rsaauth logs in with it, the Install Tool
+# requires it, and 6.2 takes its random bytes from it. PHP 5.6 does not build
+# against OpenSSL 1.1. Only libcrypto and libssl are built, static, and
+# installed with their headers into a prefix --with-openssl names; a
+# directory there keeps configure from asking pkg-config for the host's.
+# Off: assembly (C only, for wasm32), threads, shared objects, DSO loading,
+# engines and hardware support, and zlib. The algorithms are OpenSSL's
+# defaults. OpenSSL's linux-generic32 target appends -O3 to its flags, and
+# it stays: every 6.2 login form generates two RSA keys.
+openssl_prefix="$work/openssl"
+rm -rf "$work/openssl-1.0.2u" "$openssl_prefix"
+tar -xzf "$repo/vendor-src/openssl-1.0.2u/openssl-1.0.2u.tar.gz" -C "$work"
+(
+    cd "$work/openssl-1.0.2u"
+    CC=emcc AR=emar RANLIB=emranlib ./Configure linux-generic32 \
+        no-asm no-threads no-shared no-dso no-engine no-hw no-zlib \
+        -fcommon -Wno-everything --openssldir=/etc/ssl > "$work/openssl-configure.out" 2>&1
+    make depend > "$work/openssl-depend.out" 2>&1
+    make -j"$(nproc)" build_libs > "$work/openssl-make.out" 2>&1
+)
+mkdir -p "$openssl_prefix/include/openssl" "$openssl_prefix/lib"
+cp -L "$work/openssl-1.0.2u/include/openssl/"*.h "$openssl_prefix/include/openssl/"
+cp "$work/openssl-1.0.2u/libcrypto.a" "$work/openssl-1.0.2u/libssl.a" "$openssl_prefix/lib/"
+grep -q '^# *define OPENSSL_VERSION_TEXT *"OpenSSL 1\.0\.2u  20 Dec 2019"$' "$openssl_prefix/include/openssl/opensslv.h"
+options=$(sed -n 's/^OPTIONS=//p' "$work/openssl-1.0.2u/Makefile")
+for option in no-asm no-threads no-shared no-dso no-engine no-hw no-zlib; do
+    grep -qw -- "$option" <<<"$options"
+done
+
 # GD's libraries: Emscripten's ports of libpng, libjpeg and FreeType, laid
 # out as <dir>/include and <dir>/lib/lib<name>.a, as php-4.4.9/build.sh lays
 # them out. PHP 5.6 finds FreeType only through <dir>/bin/freetype-config,
@@ -141,16 +191,30 @@ chmod +x "$gd_prefix/bin/freetype-config"
 # locallang files and 16 of its files use), dom (DOMDocument, in two core
 # files) and SimpleXML.
 #
-# ext/mysql against the 3.23 client: php_mysql.c builds for the client
-# version native/libmysql/mysql.h names, 32349. That leaves out
-# mysql_set_charset() (ext/mysql/php_mysql_structs.h:52) and the
-# MYSQL_CLIENT_SSL constant, and keeps 3.23's mysql_create_db() and
-# mysql_drop_db(), deprecated. 4.5.40 calls none of them: it sends
-# "SET NAMES utf8" as a query, from setDBinit.
+# ext/mysql and mysqli against the 5.5 client: php_mysql.c builds for the
+# client version native/libmysql/mysql.h names, 50562. That gives ext/mysql
+# mysql_set_charset() (ext/mysql/php_mysql_structs.h:52) and leaves out
+# 3.23's mysql_create_db() and mysql_drop_db(), as the official image's
+# ext/mysql on mysqlnd does. 4.5.40 calls none of the three: it sends
+# "SET NAMES utf8" as a query, from setDBinit. mysqli is 6.2.31's database
+# layer (DatabaseConnection.php), prepared statements included. 6.2.31's
+# Docker image leaves ext/mysql out; here 4.5.40 needs it, and 6.2's core
+# calls none of its functions.
 #
-# Left out because 4.5.40 does not need them: SOAP (only the extension
-# manager's repository client), mbstring and iconv (t3lib_cs has its own
-# tables), cURL and OpenSSL (no rsaauth by default), PDO, sqlite3 and Phar.
+# OpenSSL for 6.2.31: its rsaauth login, its Install Tool and its random
+# bytes. 4.5.40 takes its random bytes from it too, as in Docker.
+#
+# The rest of the 15 extensions 6.2.31's Install Tool requires
+# (typo3/sysext/install/Classes/SystemEnvironment/Check.php:54), each
+# bundled with PHP: fileinfo, with libmagic and its database compiled in as
+# C data, 2.9 MB of the 3.3 MB the four add; zip, with its own libzip on
+# the zlib port; soap, which nothing in 6.2's core calls; and xmlreader, for
+# the Extension Manager's repository lists. 4.5.40's Docker image has
+# fileinfo, soap and xmlreader too, and its frontend asks fileinfo for a
+# favicon's type.
+#
+# Left out because neither release needs them: mbstring and iconv (TYPO3's
+# charset converter has its own tables), cURL, PDO, sqlite3 and Phar.
 # GD is the GD 2.1 bundled in PHP, with the GIF, PNG, JPEG and FreeType
 # support TYPO3's GIFBUILDER and the Install Tool's image tests use.
 #
@@ -185,26 +249,41 @@ emconfigure ./configure \
     --with-freetype-dir="$gd_prefix" \
     --enable-gd-native-ttf \
     --with-mysql="$mysql_prefix" \
+    --with-mysqli="$mysql_prefix/bin/mysql_config" \
+    --with-openssl="$openssl_prefix" \
     --enable-libxml \
     --with-libxml-dir="$libxml_prefix" \
     --enable-xml \
     --enable-dom \
-    --enable-simplexml > "$work/configure.out" 2>&1
+    --enable-simplexml \
+    --enable-xmlreader \
+    --enable-soap \
+    --enable-fileinfo \
+    --enable-zip \
+    --with-zlib-dir="$zlib_prefix" > "$work/configure.out" 2>&1
 grep -q '^#define SIZEOF_LONG 4$' main/php_config.h
 grep -q '^#define HAVE_BUNDLED_PCRE 1$' main/php_config.h
 grep -q '^#define HAVE_MYSQL 1$' main/php_config.h
+grep -q '^#define HAVE_MYSQLILIB 1$' main/php_config.h
+grep -q '^#define HAVE_OPENSSL_EXT 1$' main/php_config.h
 grep -q '^#define HAVE_ZLIB 1$' main/php_config.h
-for define in HAVE_LIBXML HAVE_XML HAVE_DOM HAVE_SIMPLEXML; do
+for define in HAVE_LIBXML HAVE_XML HAVE_DOM HAVE_SIMPLEXML HAVE_XMLREADER HAVE_SOAP; do
     grep -q "^#define $define 1$" main/php_config.h
 done
+# ext/zip on the libzip in PHP's archive, not on a system one. fileinfo has
+# no define: its bundled libmagic is all it takes.
+grep -q '^#define HAVE_ZIP 1$' main/php_config.h
+! grep -q '^#define HAVE_LIBZIP 1$' main/php_config.h
+grep -q 'phpext_fileinfo_ptr' main/internal_functions.c
 # ext/xml on libxml2, not on an expat.
 ! grep -q '^#define HAVE_LIBEXPAT 1$' main/php_config.h
 # The GD in PHP's archive, with each library configure was given.
 for define in HAVE_GD_BUNDLED HAVE_GD_PNG HAVE_GD_JPG HAVE_GD_FREETYPE HAVE_LIBFREETYPE ENABLE_GD_TTF USE_GD_IMGSTRTTF; do
     grep -q "^#define $define 1$" main/php_config.h
 done
-# The client shim, not mysqlnd.
+# The client shim, not mysqlnd, for both.
 ! grep -q '^#define MYSQL_USE_MYSQLND 1$' main/php_config.h
+! grep -q '^#define MYSQLI_USE_MYSQLND 1$' main/php_config.h
 # configure's test for the fopencookie() seeker's type uses __off64_t, which
 # musl lacks, so it fails. musl passes a pointer to a 64-bit off_t, which is
 # what this selects, with the type function-casts.patch gives it.
@@ -272,22 +351,24 @@ relink "$link" "-sNODERAWFS=1 -sALLOW_MEMORY_GROWTH=1 -sINITIAL_MEMORY=64MB -o $
 relink "$link" "-sENVIRONMENT=web -sMODULARIZE=1 -sEXPORT_NAME=createPhp -sINVOKE_RUN=0 -sEXIT_RUNTIME=0 -sEXPORTED_RUNTIME_METHODS=callMain,FS -sALLOW_MEMORY_GROWTH=1 -sINITIAL_MEMORY=64MB -o $work/out/web/php.js"
 
 # The request loop: sapi.c in place of the CLI's own objects, with the
-# exports php-4.4.9/build.sh gives its loop. runtime/php-runtime.js drives it.
+# exports php-4.4.9/build.sh gives its loop, and php_wasm_set_argv() for a
+# script written for the CLI. runtime/php-runtime.js drives it.
 sapi_link=$(sed -E 's# sapi/cli/[a-z_]+\.lo##g' <<<"$link")
 test "$sapi_link" != "$link"
 ! grep -q 'sapi/cli/.*\.lo' <<<"$sapi_link"
 sapi_link=${sapi_link/%-o sapi\/cli\/php/$work/php_wasm_sapi.o -o sapi\/cli\/php}
-sapi_flags="-sMODULARIZE=1 -sEXPORT_NAME=createPhp -sEXPORTED_FUNCTIONS=_php_wasm_startup,_php_wasm_request,_php_wasm_set_clock_start,_malloc,_free -sEXPORTED_RUNTIME_METHODS=FS,HEAPU8 -sALLOW_MEMORY_GROWTH=1 -sINITIAL_MEMORY=64MB"
+sapi_flags="-sMODULARIZE=1 -sEXPORT_NAME=createPhp -sEXPORTED_FUNCTIONS=_php_wasm_startup,_php_wasm_request,_php_wasm_set_argv,_php_wasm_set_clock_start,_malloc,_free -sEXPORTED_RUNTIME_METHODS=FS,HEAPU8 -sALLOW_MEMORY_GROWTH=1 -sINITIAL_MEMORY=64MB"
 mkdir -p "$work/out/sapi-node" "$work/out/sapi-web"
 relink "$sapi_link" "$sapi_flags -sENVIRONMENT=node -sNODERAWFS=1 -o $work/out/sapi-node/php.js"
 # In-memory filesystem. Node is listed so probes can run the browser build.
 relink "$sapi_link" "$sapi_flags -sENVIRONMENT=web,worker,node -o $work/out/sapi-web/php.js"
 
 # The licences of what was just linked, for site/assemble.sh to publish with
-# the binaries: PHP, the Zend Engine, PCRE and GD from the PHP archive,
-# libxml2's from its archive, Emscripten's runtime and its musl libc from the
-# emsdk that linked them, and zlib's, libpng's, libjpeg's and FreeType's from
-# the sources Emscripten's ports were built from.
+# the binaries: PHP, the Zend Engine, PCRE, GD, libmagic and libzip from the
+# PHP archive, libxml2's and OpenSSL's from their archives, Emscripten's
+# runtime and its musl libc from the emsdk that linked them, and zlib's,
+# libpng's, libjpeg's and FreeType's from the sources Emscripten's ports were
+# built from.
 emscripten=$(em-config EMSCRIPTEN_ROOT)
 rm -rf "$work/out/licences"
 mkdir -p "$work/out/licences"
@@ -295,9 +376,12 @@ cp LICENSE "$work/out/licences/php-5.6.40-LICENSE"
 cp Zend/LICENSE "$work/out/licences/zend-engine-LICENSE"
 cp ext/pcre/pcrelib/LICENCE "$work/out/licences/pcre-LICENCE"
 cp "$work/libxml2-2.9.14/Copyright" "$work/out/licences/libxml2-Copyright"
+cp "$work/openssl-1.0.2u/LICENSE" "$work/out/licences/openssl-LICENSE"
 cp "$emscripten/LICENSE" "$work/out/licences/emscripten-LICENSE"
 cp "$emscripten/system/lib/libc/musl/COPYRIGHT" "$work/out/licences/musl-COPYRIGHT"
 cp ext/gd/libgd/COPYING "$work/out/licences/gd-COPYING"
+cp ext/fileinfo/libmagic/LICENSE "$work/out/licences/libmagic-LICENSE"
+cp ext/zip/LICENSE_libzip "$work/out/licences/libzip-LICENSE"
 # Exactly one unpacked version of each port is there.
 ports="$(em-config CACHE)/ports"
 port_file() {

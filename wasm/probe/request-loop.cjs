@@ -241,7 +241,8 @@ function prepareScratch() {
 
   // ext/mysql, built against native/libmysql/, with the shim answering as
   // each server the releases on this PHP talk to. Each run stores and reads
-  // back strings with NUL bytes, as serialize() writes them.
+  // back strings with NUL bytes, as serialize() writes them. On PHP 5,
+  // mysqli too, against the same client library.
   const MysqlOnSqlite = require('../runtime/mysql-sqlite.js');
   const initSqlJs = require(path.join(__dirname, '..', 'node_modules', 'sql.js'));
   const SQL = await initSqlJs();
@@ -249,18 +250,33 @@ function prepareScratch() {
     const label = `MySQL ${server.serverVersion}${server.charset ? ` ${server.charset}` : ''}`;
     const withMysql = await startPhp(`ini-mysql-${server.serverVersion}-${server.charset || 'latin1'}`, {
       iniText: iniWith(),
-      mysql: new MysqlOnSqlite(SQL, server),
+      // The stacks' user, so a wrong password is refused, as by MySQL.
+      mysql: new MysqlOnSqlite(SQL, { ...server, users: { typo3: 'typo3' } }),
     });
+    const queryString = `server=${server.serverVersion}&charset=${server.charset || 'latin1'}`;
     check(`ext/mysql against the shim as ${label}: connect, escape, NUL bytes, serialize(), fetch, errors`, () => {
-      const response = request(withMysql, 'mysql.php', { queryString: `server=${server.serverVersion}` });
+      const response = request(withMysql, 'mysql.php', { queryString });
       console.log(response.text.trimEnd().split('\n').map(line => `     ${line}`).join('\n'));
       assert.deepStrictEqual(response.log, []);
       assert.match(response.text, /MYSQL OK\n$/);
     });
+    if (phpVersion === '5.6.40') {
+      check(`mysqli against the shim as ${label}: connect, charsets, results, prepared statements, errors`, () => {
+        const response = request(withMysql, 'mysqli.php', { queryString });
+        console.log(response.text.trimEnd().split('\n').map(line => `     ${line}`).join('\n'));
+        assert.deepStrictEqual(response.log, []);
+        assert.match(response.text, /MYSQLI OK\n$/);
+      });
+    }
   }
 
   if (phpVersion === '5.6.40') {
     await php5Checks();
+  } else {
+    check('a command line is refused: only PHP 5.6.40\'s loop takes one', () => {
+      assert.throws(() => probe('env.php', { argv: ['preflight'] }), /This PHP build takes no command line/);
+      assert.strictEqual(probe('state.php').text, 'globals=fresh\nstatic=1\nstate=ok\n');
+    });
   }
 
   const scripts = ['state.php', 'env.php', 'fatal.php', 'exit.php', 'parse-error.php'];
@@ -296,6 +312,22 @@ function prepareScratch() {
       method: 'POST',
       headers: { Host: 'localhost', 'Content-Type': 'application/json' },
       body: new Uint8Array(body),
+    });
+
+    // 6.2/provision.php is a CLI script and reads its mode from $argv[1].
+    check('a command line gives $argv and $argc as the CLI does, for that request only', () => {
+      const script = scriptPath('argv.php');
+      const withArgv = JSON.parse(probe('argv.php', { argv: ['preflight', '', 'two words'] }).text);
+      assert.deepStrictEqual(withArgv, {
+        argv: [script, 'preflight', '', 'two words'], argc: 4,
+        server_argv: [script, 'preflight', '', 'two words'], server_argc: 4,
+      });
+      // The next request is a web request again: no globals, and $_SERVER's
+      // copies split from the query string.
+      const without = JSON.parse(probe('argv.php', { queryString: 'a+b' }).text);
+      assert.deepStrictEqual(without, { argv: null, argc: null, server_argv: ['a', 'b'], server_argc: 2 });
+      assert.throws(() => probe('argv.php', { argv: ['nul\0byte'] }), /NUL byte/);
+      assert.deepStrictEqual(JSON.parse(probe('argv.php').text).argv, null);
     });
 
     check('a JSON body arrives at php://input byte for byte, twice, and fills no form field', () => {
@@ -430,6 +462,46 @@ function prepareScratch() {
     check('wasm memory after 10, 100 and 500 requests is the same', () => {
       console.log(`     wasm memory after 10, 100, 500 requests: ${[10, 100, 500].map(n => heapAfter[n] / 1048576).join(', ')} MB`);
       assert.strictEqual(heapAfter[500], heapAfter[10]);
+    });
+    // ext/openssl as 6.2.31's rsaauth uses it for a login: www-5/openssl.php
+    // makes the key pair as PhpBackend does, Node encrypts a password with
+    // its public key and PKCS#1 v1.5 padding, as jsbn's RSAKey.encrypt() does
+    // in the login form and 6.2/ci-rsa.py does in CI, and PHP decrypts it.
+    // Each login form generates two keys, so their time is measured.
+    const crypto = require('crypto');
+    const keyPairs = [];
+    check('ext/openssl: rsaauth\'s key pair, the Install Tool\'s check, random bytes', () => {
+      for (let i = 0; i < 5; i++) {
+        const response = request(php, 'openssl.php', { queryString: 'mode=key' });
+        if (i === 0) {
+          console.log(response.text.split('\n').filter(line => !line.startsWith('KEY ')).map(line => `     ${line}`).join('\n').trimEnd());
+        }
+        assert.deepStrictEqual(response.log, []);
+        assert.match(response.text, /OPENSSL OK\n/);
+        keyPairs.push(JSON.parse(response.text.match(/^KEY (.*)$/m)[1]));
+      }
+      const times = keyPairs.flatMap(pair => [pair.availableMs, pair.keyMs]).sort((a, b) => a - b);
+      console.log(`     2048-bit key generation, ms, 10 keys: ${times.join(', ')}; a login form takes two`);
+      assert.strictEqual(new Set(keyPairs.map(pair => pair.modulus)).size, keyPairs.length);
+    });
+    check('ext/openssl: a password encrypted in Node with PKCS#1 v1.5, as the login form does, decrypts in PHP', () => {
+      const { modulus, exponent, privateKey } = keyPairs[0];
+      const exponentHex = exponent.toString(16).padStart(6, '0');
+      const publicKey = crypto.createPublicKey({
+        key: { kty: 'RSA', n: Buffer.from(modulus, 'hex').toString('base64url'), e: Buffer.from(exponentHex, 'hex').toString('base64url') },
+        format: 'jwk',
+      });
+      for (const password of ['password', 'Grüße 日本 \' " \\ &=+']) {
+        const data = crypto.publicEncrypt({ key: publicKey, padding: crypto.constants.RSA_PKCS1_PADDING }, Buffer.from(password, 'utf8'));
+        const response = request(php, 'openssl.php', {
+          queryString: 'mode=decrypt',
+          method: 'POST',
+          headers: { Host: 'localhost', 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new Uint8Array(Buffer.from(new URLSearchParams({ privateKey, data: data.toString('base64') }).toString())),
+        });
+        assert.deepStrictEqual(response.log, []);
+        assert.strictEqual(Buffer.from(response.body).toString('utf8'), password);
+      }
     });
   }
 

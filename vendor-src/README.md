@@ -14,14 +14,17 @@ Frozen upstream source archives and the release metadata that attests them.
 | `php-4.4.9/`    | PHP 4.4.9 — final PHP 4 release                         | 2008-08-07 | 5.6 MB  | md5, matched                                                                |
 | `php-5.6.40/`   | PHP 5.6.40 — final PHP 5 release                        | 2019-01-10 | 19.3 MB | sha256, matched                                                             |
 | `libxml2-2.9.14/` | libxml2 2.9.14 — final 2.9 release                    | 2022-05-02 | 3.1 MB  | sha256, matched; GNOME's published `.sha256sum` kept beside it              |
+| `openssl-1.0.2u/` | OpenSSL 1.0.2u — final 1.0.2 release                  | 2019-12-20 | 5.4 MB  | sha256 + sha1, both matched; OpenSSL's published files and signature kept beside it |
 
-`php-4.4.9/`, `php-5.6.40/` and `libxml2-2.9.14/` are the entries that are not
-TYPO3 releases.
+`php-4.4.9/`, `php-5.6.40/`, `libxml2-2.9.14/` and `openssl-1.0.2u/` are the
+entries that are not TYPO3 releases.
 `php-4.4.9/` is here because `php4-base/` compiles it into the only PHP 4
 runtime in this repository, and `wasm/php-4.4.9/build.sh` compiles it to
 WebAssembly. `php-5.6.40/` is here because `wasm/php-5.6.40/build.sh`
-compiles it to WebAssembly, and `libxml2-2.9.14/` because the same script
-compiles it for PHP 5.6's XML extensions: PHP 5.6 bundles no XML parser.
+compiles it to WebAssembly, `libxml2-2.9.14/` because the same script
+compiles it for PHP 5.6's XML extensions (PHP 5.6 bundles no XML parser), and
+`openssl-1.0.2u/` because it compiles that for PHP 5.6's ext/openssl, which
+TYPO3 6.2.31's login needs.
 Fetching it from `museum.php.net` at build time would make a 2008 end-of-life
 archive on a single unmirrored host a hard dependency of the build. An archive the
 build cannot proceed without belongs under the same guarantee as the sources it

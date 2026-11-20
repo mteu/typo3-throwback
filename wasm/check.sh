@@ -18,15 +18,17 @@ here=$(dirname "$(realpath "$0")")
 (cd "$here" && npm ci --no-audit --no-fund --silent)
 
 # Prints the *.php and *.inc files under an unpacked release that the CLI in
-# "${php[@]}" does not parse, one per line, sorted.
+# "${php[@]}" does not parse, one per line, sorted. One CLI per file, as many
+# at once as there are CPUs: a release has up to 3,289 files.
 lint_failures() {
     (
         cd "$1"
-        find . \( -name '*.php' -o -name '*.inc' \) | sort | while read -r file; do
-            if ! "${php[@]}" -l "$file" 2>&1 | grep -q '^No syntax errors'; then
-                echo "$file"
-            fi
-        done
+        # shellcheck disable=SC2016 # expanded by the inner bash, per file
+        find . \( -name '*.php' -o -name '*.inc' \) -print0 \
+            | xargs -0 -n 1 -P "$(nproc)" bash -c \
+                'if ! "${@:1:$#-1}" -l "${!#}" 2>&1 | grep -q "^No syntax errors"; then echo "${!#}"; fi' \
+                lint "${php[@]}" \
+            | sort
     )
 }
 
@@ -58,7 +60,7 @@ check_bailout 'Fatal error: Call to undefined function: undefined_function_call(
 
 echo "== mail() through /bin/true, as every Docker stack's sendmail_path"
 "${php[@]}" "$here/probe/mail.php"
-"${php[@]}" -d sendmail_path=/usr/sbin/sendmail "$here/probe/mail.php" refused
+"${php[@]}" -d sendmail_path=sendmail "$here/probe/mail.php" refused
 
 echo "== request loop: many requests in one instance"
 node "$here/probe/request-loop.cjs" "$php4/sapi-node" "$work/request-loop" 4.4.9
@@ -81,7 +83,7 @@ echo "== PHP 5's bundled extensions: ctype, filter, hash, json, tokenizer, zlib"
 
 echo "== mail() through /bin/true, on PHP 5"
 "${php[@]}" "$here/probe/mail.php"
-"${php[@]}" -d sendmail_path=/usr/sbin/sendmail "$here/probe/mail.php" refused
+"${php[@]}" -d sendmail_path=sendmail "$here/probe/mail.php" refused
 
 echo "== request loop on PHP 5: many requests, php://input, the raw-POST deprecation, uploads, ext/mysql, sessions, the clock"
 node "$here/probe/request-loop.cjs" "$php5/sapi-node" "$work/request-loop-5" 5.6.40
@@ -169,9 +171,14 @@ for release in "${releases[@]}"; do
             echo "== GD, FreeType and zlib on PHP 5, with a font from the 4.5.40 source"
             "${php[@]}" "$here/probe/gd.php" "$tree/t3lib/fonts/vera.ttf"
 
-            # What a default site takes where the build has no function to call.
-            echo "== 4.5.40's random bytes and charset conversion, with no openssl, mcrypt, iconv or mbstring"
+            # Where the core can choose, what a default site takes on this build.
+            echo "== 4.5.40's random bytes from openssl, and charset conversion with no iconv or mbstring"
             "${php[@]}" -d error_reporting=22519 "$here/probe/core-functions-5.php" "$tree"
+            ;;
+        6.2.31)
+            # None: 6.2.31 runs on PHP 5.6.40, as its Docker stack does.
+            test "$total" -eq 3289
+            test -z "$failing"
             ;;
         *)
             echo "no lint expectations for $release" >&2
@@ -180,7 +187,12 @@ for release in "${releases[@]}"; do
     esac
 
     echo "== TypoScript parser from $release core"
-    "${php[@]}" -d error_reporting=2039 "$here/probe/typoscript.php" "$tree"
+    if [ -d "$tree/t3lib" ]; then
+        "${php[@]}" -d error_reporting=2039 "$here/probe/typoscript.php" "$tree"
+    else
+        # A namespaced core, from 6.2 on: the probe loads it by namespace.
+        "${php[@]}" -d error_reporting=22519 "$here/probe/typoscript-6.php" "$tree"
+    fi
 
     echo "== TYPO3 $release through the request loop, without a database"
     node "$here/probe/bootstrap.cjs" "$work" "$release"

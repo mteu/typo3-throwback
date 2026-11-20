@@ -30,7 +30,8 @@ docker compose -f typo3-3.3.yaml down -v
 ## Each release
 
 The other releases work the same way: download `<version>/compose.yaml` and
-use its port. The credentials are the same.
+use its port. The credentials are the same, but for 6.2's Install Tool: its
+password is the admin's, `password`, because 6.2's own installer sets it so.
 
 | TYPO3 | Runs on | Port |
 | --- | --- | --- |

@@ -1,7 +1,8 @@
 <?php
-// The paths of 4.5.40's core that a default site takes where the PHP 5.6.40
-// build has no function to call: it has no openssl, mcrypt, iconv or mbstring.
-// Argument 1: the root of an unpacked typo3_src-4.5.40 tree.
+// The paths 4.5.40's core takes on the PHP 5.6.40 build where it can choose:
+// random bytes from openssl, as in Docker, and charsets with its own tables,
+// as the build has no iconv or mbstring. Argument 1: the root of an unpacked
+// typo3_src-4.5.40 tree.
 
 $failures = 0;
 
@@ -26,12 +27,12 @@ $GLOBALS['TYPO3_CONF_VARS']['SYS']['curlUse'] = false;
 include_once(PATH_t3lib . 'class.t3lib_div.php');
 include_once(PATH_t3lib . 'class.t3lib_cs.php');
 
-expect('the build has none of the functions the core can prefer',
-    !function_exists('openssl_random_pseudo_bytes') && !function_exists('mcrypt_create_iv')
+expect('the build has openssl, and none of mcrypt, iconv, mbstring and curl',
+    function_exists('openssl_random_pseudo_bytes') && !function_exists('mcrypt_create_iv')
     && !function_exists('iconv') && !function_exists('mb_substr') && !function_exists('curl_init'));
 
 // t3lib_div::generateRandomBytes() takes openssl, then mcrypt, then its own
-// generator, which is what session ids and salts come from here.
+// generator. Session ids and salts come from openssl here, as in Docker.
 $first = t3lib_div::generateRandomBytes(16);
 $second = t3lib_div::generateRandomBytes(16);
 $long = t3lib_div::generateRandomBytes(5000);

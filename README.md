@@ -48,13 +48,13 @@ This is not a mockup. These are the original release archives, checksum-verified
 running on PHP 4.4.9 for 3.3.0 and PHP 5.6 for the rest. PHP 4.4.9 is compiled
 from unmodified upstream source. Even the clock is set back to the release date.
 
-| Version | Released | Runs on | Port |
-| --- | --- | --- | --- |
-| **3.3.0**, the oldest publicly available TYPO3 | 2002-06-03 | PHP 4.4.9, MySQL 5.5 | 8033 |
-| **3.8.1**, the last release before 4.0 | 2005-11-14 | PHP 5.6.40, MySQL 5.5 | 8038 |
-| **4.0.13**, the last 4.0 release | 2009-07-02 | PHP 5.6.40, MySQL 5.5 | 8040 |
-| **4.5.40**, the last release of the first LTS | 2015-02-19 | PHP 5.6.40, MySQL 5.5 | 8045 |
-| **6.2.31**, the last public release of the second LTS | 2017-04-18 | PHP 5.6.40, MySQL 5.5 | 8062 |
+| Version | Released | With Docker | Port | In your browser |
+| --- | --- | --- | --- | --- |
+| **3.3.0**, the oldest publicly available TYPO3 | 2002-06-03 | PHP 4.4.9, MySQL 5.5 | 8033 | [open it](https://throwback.mteu.cc/3.3), PHP 4.4.9 |
+| **3.8.1**, the last release before 4.0 | 2005-11-14 | PHP 5.6.40, MySQL 5.5 | 8038 | [open it](https://throwback.mteu.cc/3.8), PHP 4.4.9 |
+| **4.0.13**, the last 4.0 release | 2009-07-02 | PHP 5.6.40, MySQL 5.5 | 8040 | [open it](https://throwback.mteu.cc/4.0), PHP 4.4.9 |
+| **4.5.40**, the last release of the first LTS | 2015-02-19 | PHP 5.6.40, MySQL 5.5 | 8045 | [open it](https://throwback.mteu.cc/4.5), PHP 5.6.40 |
+| **6.2.31**, the last public release of the second LTS | 2017-04-18 | PHP 5.6.40, MySQL 5.5 | 8062 | [open it](https://throwback.mteu.cc/6.2), PHP 5.6.40 |
 
 ## Quick start
 
@@ -76,7 +76,9 @@ Then open <http://127.0.0.1:8033/>.
 | Install Tool | <http://127.0.0.1:8033/typo3/install/> | password `joh316` |
 
 The other stacks work the same way. Download `<version>/compose.yaml` and use the
-port from the table above. The logins are the same for every version.
+port from the table above. The logins are the same for every version, but for
+6.2's Install Tool: its password is the admin's, `password`, because 6.2's own
+installer sets it so.
 
 To stop a stack and delete its data:
 
@@ -98,14 +100,12 @@ The guides below show paths as they appear inside a clone, such as
 > Use a real browser for the 3.3 backend. TYPO3 3.3 rejects any User-Agent it
 > does not recognize, including `curl`.
 
-## Or try 3.3.0, 3.8.1, 4.0.13 and 4.5.40 in your browser
+## Or try all five in your browser
 
-No Docker needed: <https://throwback.mteu.cc/3.3> runs TYPO3 3.3.0,
-<https://throwback.mteu.cc/3.8> runs TYPO3 3.8.1 and
-<https://throwback.mteu.cc/4.0> runs TYPO3 4.0.13, all on PHP 4.4.9, and
-<https://throwback.mteu.cc/4.5> runs TYPO3 4.5.40 on PHP 5.6.40. Each PHP is
-compiled to WebAssembly and runs in your own tab. Nothing runs on a server, and
-nothing you do there leaves your browser. The credentials are the ones above.
+No Docker needed: each release also runs in your browser, at the link in the
+table above. Its PHP is compiled to WebAssembly and runs in your own tab.
+Nothing runs on a server, and nothing you do there leaves your browser. The
+credentials are the ones above.
 
 ## Documentation
 

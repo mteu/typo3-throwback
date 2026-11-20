@@ -1,8 +1,9 @@
 // MySQL 3.23 behaviour of runtime/mysql-sqlite.js, without PHP: the parts
 // TYPO3 relies on, and the parts the stack probes (probe/stack-<release>.cjs)
 // do not reach, such as the ALTER TABLE the Install Tool's database compare
-// sends. Then what the 5.5 server answers on top, for 4.0/provision.php, and
-// that 3.23 refuses each of those with its own error. Then a 5.5 server's
+// sends. Then what the 5.5 server answers on top, for 4.0/provision.php and
+// for 6.2's installer and database analyzer, and that 3.23 refuses each of
+// those with its own error. Then a 5.5 server's
 // character set, latin1 and utf8 side by side: SET NAMES, the charset
 // variables, characters against bytes, case and accents in =, LIKE and
 // ORDER BY, and the SHOW statements 4.5's Install Tool sends.
@@ -183,6 +184,16 @@ const CHARSET_VARIABLES = ['character_set_server', 'character_set_connection', '
     assert.strictEqual(ok("INSERT INTO pages (title) VALUES ('after alter')").insertId, 34);
   });
 
+  check('LIMIT takes integers only, as n, m, n or n OFFSET m; NULL or an expression is a syntax error', () => {
+    assert.deepStrictEqual(rows('SELECT uid FROM pages ORDER BY uid LIMIT 2').length, 2);
+    assert.deepStrictEqual(rows('SELECT uid FROM pages ORDER BY uid LIMIT 1, 1'), rows('SELECT uid FROM pages ORDER BY uid LIMIT 1 OFFSET 1'));
+    assert.deepStrictEqual(rows('SELECT uid FROM pages WHERE uid IN (SELECT uid FROM pages) ORDER BY uid LIMIT 1').length, 1);
+    for (const limit of ['NULL', "'1'", '1 + 1', '1, NULL', '-1']) {
+      const response = query(`SELECT uid FROM pages LIMIT ${limit}`);
+      assert.deepStrictEqual(response.errno, 1064, limit);
+    }
+  });
+
   check('errors: unknown table, unknown column, syntax', () => {
     assert.deepStrictEqual([query('SELECT * FROM nope').errno, query('SELECT nope FROM pages').errno, query('SELEKT 1').errno],
       [1146, 1054, 1064]);
@@ -218,6 +229,10 @@ const CHARSET_VARIABLES = ['character_set_server', 'character_set_connection', '
     assert.deepStrictEqual(rows("SHOW VARIABLES LIKE 'character_set%'"), [['character_set', 'latin1']]);
   });
 
+  check('3.23 refuses a DELETE through a join, which came with MySQL 4.0', () => {
+    assert.strictEqual(query('DELETE p FROM pages AS p WHERE p.uid = 0').errno, 1064);
+  });
+
   check('only 3.23.49 and 5.5.62 are imitated', () => {
     assert.throws(() => new MysqlOnSqlite(SQL, { serverVersion: '4.1.22' }), /MySQL 4\.1\.22 is not imitated/);
   });
@@ -225,8 +240,9 @@ const CHARSET_VARIABLES = ['character_set_server', 'character_set_connection', '
   const server55 = new MysqlOnSqlite(SQL, { serverVersion: '5.5.62', users: { typo3: 'typo3' }, now });
   const mysql55 = connect(server55);
 
-  check('5.5 tells libmysql its version', () => {
-    assert.strictEqual(server55.handle(1, 0, 'db', 'typo3', 'typo3').serverVersion, '5.5.62');
+  check('5.5 tells libmysql its version, and the charset a connection starts in', () => {
+    const link = server55.handle(1, 0, 'db', 'typo3', 'typo3');
+    assert.deepStrictEqual([link.serverVersion, link.charset], ['5.5.62', 'latin1']);
   });
 
   check('5.5 answers the character set variables with latin1, before and after a database is selected', () => {
@@ -281,10 +297,21 @@ const CHARSET_VARIABLES = ['character_set_server', 'character_set_connection', '
     ]);
   });
 
-  check('5.5 reads information_schema without a database selected, and only COLUMNS', () => {
+  check('5.5 answers information_schema.TABLES as 6.2/provision.php asks it', () => {
+    const tables = Number(mysql55.rows("SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = 'typo3'")[0][0]);
+    assert.strictEqual(tables, mysql55.rows('SHOW TABLES').length);
+    assert.deepStrictEqual(mysql55.rows("SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = 'typo3' AND TABLE_NAME LIKE 'pa\\_%'"), [['0']]);
+    assert.deepStrictEqual(mysql55.rows("SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = 'typo3' AND TABLE_NAME LIKE 'pag%'"), [['1']]);
+    const pages = mysql55.rows("SELECT TABLE_TYPE, ENGINE, ROW_FORMAT, TABLE_ROWS, AUTO_INCREMENT, TABLE_COLLATION FROM information_schema.TABLES WHERE TABLE_NAME = 'pages'");
+    const status = mysql55.rows("SHOW TABLE STATUS LIKE 'pages'")[0];
+    assert.deepStrictEqual(pages, [['BASE TABLE', status[1], status[3], status[4], status[10], status[14]]]);
+  });
+
+  check('5.5 reads information_schema without a database selected, and only COLUMNS and TABLES', () => {
     const fresh = connect(server55);
     assert.deepStrictEqual(fresh.rows(PROVISION_COLUMN_CHARSET), [['latin1']]);
-    assert.strictEqual(fresh.query('SELECT * FROM information_schema.TABLES').errno, 1105);
+    assert.deepStrictEqual(fresh.rows("SELECT COUNT(*) FROM information_schema.TABLES t, information_schema.COLUMNS c WHERE t.TABLE_NAME = c.TABLE_NAME AND c.COLUMN_NAME = 'uid' AND t.TABLE_NAME = 'pages'"), [['1']]);
+    assert.strictEqual(fresh.query('SELECT * FROM information_schema.VIEWS').errno, 1105);
   });
 
   check("5.5's HEX(): a string's bytes, so latin1 comes back byte for byte", () => {
@@ -301,6 +328,139 @@ const CHARSET_VARIABLES = ['character_set_server', 'character_set_connection', '
       ['character_set_client', 'latin1'], ['character_set_connection', 'latin1'], ['character_set_database', 'latin1'],
       ['character_set_results', 'latin1'], ['character_set_server', 'latin1'], ['character_set_system', 'utf8'],
     ]);
+  });
+
+  // What 6.2's installer and its database analyzer send, past what 4.5 did.
+
+  check("5.5 refuses a wrong password with 5.x's message, which quotes user and host apart", () => {
+    const response = server55.handle(1, 0, '127.0.0.1', '', '');
+    assert.strictEqual(response.errno, 1045);
+    assert.strictEqual(response.message, "Access denied for user ''@'127.0.0.1' (using password: NO)");
+  });
+
+  // DatabaseConnection::checkConnectionCharset(), on every connection.
+  check('5.5 answers SHOW SESSION and SHOW GLOBAL VARIABLES: the connection\'s values, and the server\'s', () => {
+    const scoped = connect(server55);
+    scoped.ok('SET NAMES utf8');
+    const session = scoped.rows("SHOW SESSION VARIABLES LIKE 'character_set%'");
+    assert.deepStrictEqual(session.filter(([name]) => /client|connection|results/.test(name)).map(([, value]) => value),
+      ['utf8', 'utf8', 'utf8']);
+    assert.deepStrictEqual(scoped.rows("SHOW VARIABLES LIKE 'character_set%'"), session);
+    assert.deepStrictEqual(scoped.rows("SHOW GLOBAL VARIABLES LIKE 'character_set_c%'"),
+      [['character_set_client', 'latin1'], ['character_set_connection', 'latin1']]);
+    assert.strictEqual(connect(server).query('SHOW SESSION VARIABLES').errno, 1064);
+  });
+
+  // DatabaseConnection::setSqlMode(), and admin_get_dbs() for the
+  // installer's database step.
+  check('5.5 answers @@SESSION.sql_mode empty, and takes SET sql_mode', () => {
+    assert.deepStrictEqual(mysql55.rows('SELECT @@SESSION.sql_mode;'), [['']]);
+    mysql55.ok("SET sql_mode='';");
+  });
+
+  check('5.5 lists information_schema and each database in information_schema.SCHEMATA and SHOW DATABASES', () => {
+    assert.deepStrictEqual(mysql55.rows('SELECT SCHEMA_NAME, DEFAULT_CHARACTER_SET_NAME, DEFAULT_COLLATION_NAME FROM information_schema.SCHEMATA'), [
+      ['information_schema', 'utf8', 'utf8_general_ci'], ['typo3', 'latin1', 'latin1_swedish_ci'],
+    ]);
+    assert.deepStrictEqual(mysql55.rows('SHOW DATABASES'), [['information_schema'], ['typo3']]);
+    assert.deepStrictEqual(rows('SHOW DATABASES'), [['typo3']]);
+  });
+
+  check('5.5 selects information_schema, and refuses a statement that needs it as the current database', () => {
+    const inside = connect(server55);
+    assert.strictEqual(server55.handle(3, inside.link, 'information_schema').kind, 'ok');
+    assert.deepStrictEqual(inside.rows('SELECT 1'), [['1']]);
+    assert.deepStrictEqual(inside.rows("SELECT COUNT(*) FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = 'typo3'"), [['1']]);
+    assert.match(inside.query('SELECT * FROM TABLES').message, /information_schema as the current database is not imitated/);
+    assert.match(inside.query('SHOW TABLES').message, /information_schema as the current database is not imitated/);
+    assert.strictEqual(server.handle(3, link, 'information_schema').errno, 1049);
+  });
+
+  // SqlSchemaMigrationService::getFieldDefinitions_database() rebuilds each
+  // table's definition from SHOW COLUMNS and SHOW KEYS, and compares it with
+  // the ext_tables.sql files'.
+  check("5.5's SHOW COLUMNS says NO for NOT NULL, where 3.23 leaves it empty", () => {
+    assert.deepStrictEqual(mysql55.rows('SHOW COLUMNS FROM pages').map(row => [row[0], row[2]]),
+      [['uid', 'NO'], ['title', 'NO'], ['alias', 'NO'], ['bodytext', 'YES'], ['tstamp', 'NO'], ['uc', 'NO']]);
+  });
+
+  check("SHOW KEYS and SHOW CREATE TABLE give a key's prefix length where it covers less than the column, as MySQL 5.5 does", () => {
+    mysql55.ok(`CREATE TABLE sys_file (
+      uid int(11) NOT NULL auto_increment,
+      sha1 char(40) DEFAULT '' NOT NULL,
+      tablenames varchar(64) DEFAULT '' NOT NULL,
+      fieldname varchar(64) DEFAULT '' NOT NULL,
+      identifier text,
+      PRIMARY KEY (uid),
+      KEY sha1 (sha1(40)),
+      KEY tablenames_fieldname (tablenames(32),fieldname(12)),
+      KEY identifier (identifier(199))
+    )`);
+    const subParts = () => mysql55.rows('SHOW KEYS FROM sys_file').map(row => [row[2], row[4], row[7]]);
+    assert.deepStrictEqual(subParts(), [
+      ['PRIMARY', 'uid', null], ['sha1', 'sha1', null], ['tablenames_fieldname', 'tablenames', '32'],
+      ['tablenames_fieldname', 'fieldname', '12'], ['identifier', 'identifier', '199'],
+    ]);
+    const create = mysql55.rows('SHOW CREATE TABLE sys_file')[0][1];
+    assert.match(create, /\n {2}KEY sha1 \(sha1\),\n {2}KEY tablenames_fieldname \(tablenames\(32\),fieldname\(12\)\),\n {2}KEY identifier \(identifier\(199\)\)\n/);
+    // Each prefix stays with its column when another column of the key goes.
+    mysql55.ok('ALTER TABLE sys_file DROP tablenames');
+    mysql55.ok('CREATE INDEX by_name ON sys_file (fieldname(8), sha1)');
+    assert.deepStrictEqual(subParts().slice(2), [
+      ['tablenames_fieldname', 'fieldname', '12'], ['identifier', 'identifier', '199'], ['by_name', 'fieldname', '8'], ['by_name', 'sha1', null],
+    ]);
+    assert.strictEqual(mysql55.query('ALTER TABLE sys_file ADD KEY bad (sha1(x))').errno, 1064);
+    mysql55.ok('DROP TABLE sys_file');
+  });
+
+  // TYPO3 6.2's caching framework flushes a tag and collects garbage with
+  // these, as Typo3DatabaseBackend.php sends them to MySQL.
+  check("5.5 deletes through a join, from each table it names, as 6.2's caching framework asks", () => {
+    mysql55.ok('CREATE TABLE cf_cache_pages (id int(11) unsigned NOT NULL auto_increment, identifier varchar(250) DEFAULT \'\' NOT NULL,'
+      + ' expires int(11) unsigned DEFAULT \'0\' NOT NULL, content mediumblob, PRIMARY KEY (id))');
+    mysql55.ok('CREATE TABLE cf_cache_pages_tags (id int(11) unsigned NOT NULL auto_increment, identifier varchar(250) DEFAULT \'\' NOT NULL,'
+      + ' tag varchar(250) DEFAULT \'\' NOT NULL, PRIMARY KEY (id))');
+    const fill = () => {
+      mysql55.ok('DELETE FROM cf_cache_pages');
+      mysql55.ok('DELETE FROM cf_cache_pages_tags');
+      mysql55.ok("INSERT INTO cf_cache_pages (identifier, expires, content) VALUES ('a', 2000, 'A'), ('b', 2000, 'B'), ('c', 1000, 'C')");
+      mysql55.ok("INSERT INTO cf_cache_pages_tags (identifier, tag) VALUES ('a', 'pageId_1'), ('a', 'pages'), ('b', 'pageId_2'),"
+        + " ('b', 'pages'), ('c', 'pageId_3'), ('d', 'pageId_4')");
+    };
+    const left = () => [
+      mysql55.rows('SELECT identifier FROM cf_cache_pages ORDER BY identifier').map(([identifier]) => identifier).join(''),
+      mysql55.rows('SELECT identifier, tag FROM cf_cache_pages_tags ORDER BY id').map(row => row.join(':')).join(' '),
+    ];
+
+    // flushByTag(): every tag of each entry tagged pageId_1, and the entry.
+    fill();
+    const flushed = mysql55.ok("DELETE tags2, cache1 FROM cf_cache_pages_tags AS tags1"
+      + " JOIN cf_cache_pages_tags AS tags2 ON tags1.identifier = tags2.identifier"
+      + " JOIN cf_cache_pages AS cache1 ON tags1.identifier = cache1.identifier WHERE tags1.tag = 'pageId_1'");
+    assert.strictEqual(flushed.affectedRows, 3);
+    assert.deepStrictEqual(left(), ['bc', 'b:pageId_2 b:pages c:pageId_3 d:pageId_4']);
+
+    // collectGarbage(): expired entries with their tags, then tags with no
+    // entry. A LEFT JOIN finds c's tags and d's, which has no entry.
+    fill();
+    mysql55.ok('DELETE cache, tags FROM cf_cache_pages AS cache'
+      + ' LEFT OUTER JOIN cf_cache_pages_tags AS tags ON cache.identifier = tags.identifier WHERE cache.expires < 1500');
+    assert.deepStrictEqual(left(), ['ab', 'a:pageId_1 a:pages b:pageId_2 b:pages d:pageId_4']);
+    mysql55.ok('DELETE tags FROM cf_cache_pages_tags AS tags'
+      + ' LEFT OUTER JOIN cf_cache_pages AS cache ON tags.identifier = cache.identifier WHERE cache.identifier IS NULL');
+    assert.deepStrictEqual(left(), ['ab', 'a:pageId_1 a:pages b:pageId_2 b:pages']);
+
+    // Nothing matches: nothing is deleted.
+    assert.strictEqual(mysql55.ok("DELETE tags2, cache1 FROM cf_cache_pages_tags AS tags1"
+      + " JOIN cf_cache_pages_tags AS tags2 ON tags1.identifier = tags2.identifier"
+      + " JOIN cf_cache_pages AS cache1 ON tags1.identifier = cache1.identifier WHERE tags1.tag = 'none'").affectedRows, 0);
+    assert.deepStrictEqual(left(), ['ab', 'a:pageId_1 a:pages b:pageId_2 b:pages']);
+
+    // A name that is not a table of the join is refused, as MySQL refuses it.
+    const unknown = mysql55.query('DELETE other FROM cf_cache_pages AS cache WHERE cache.expires < 1500');
+    assert.deepStrictEqual([unknown.errno, unknown.message], [1109, "Unknown table 'other' in MULTI DELETE"]);
+    mysql55.ok('DROP TABLE cf_cache_pages');
+    mysql55.ok('DROP TABLE cf_cache_pages_tags');
   });
 
   // --- the character set of a 5.5 server ---------------------------------
