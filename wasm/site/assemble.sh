@@ -41,12 +41,14 @@ mkdir -p "$shared"
 # Pages lets it cache each file for ten minutes. A name changes only when its
 # content does. The worker finds each file by its logical name in a map:
 # "runtime/tar.js", "php-4.4.9/php.wasm", or the path in this repository
-# that a release file names.
+# that a release file names. The map has each file's size too, which the
+# worker counts its download against.
 map='{'
+declare -A size=()
 publish() {
     local logical=$1 source=$2 base hash published
     # Releases can share an input, such as php4-base/php-legacy.ini.
-    [[ $map == *"\"$logical\":"* ]] && return
+    [[ ${size[$logical]+set} ]] && return
     base=$(basename "$logical")
     hash=$(sha256sum "$source" | cut -c1-16)
     case $base in
@@ -54,11 +56,13 @@ publish() {
         *.*) published="${base%.*}.$hash.${base##*.}" ;;
     esac
     cp "$source" "$shared/$published"
-    map+="\"$logical\":\"$published\","
+    size[$logical]=$(stat -c %s "$source")
+    map+="\"$logical\":[\"$published\",${size[$logical]}],"
 }
+runtime=(runtime/php-runtime.js runtime/mysql-sqlite.js runtime/tar.js runtime/typo3-site.js runtime/step-installer.js)
 
-for name in php-runtime.js mysql-sqlite.js tar.js typo3-site.js step-installer.js; do
-    publish "runtime/$name" "$wasm/runtime/$name"
+for logical in "${runtime[@]}"; do
+    publish "$logical" "$wasm/$logical"
 done
 for name in sql-wasm.js sql-wasm.wasm; do
     publish "sql.js/$name" "$wasm/node_modules/sql.js/dist/$name"
@@ -84,24 +88,66 @@ for php in "${interpreters[@]}"; do
     done
 done
 
+# What a visit downloads: every file the worker loads for the release. The
+# worker and the shell are left out: they are small, and the worker cannot
+# name its own size. The worker counts its download up to this number, and
+# the shell's release menu shows it.
+declare -A download=()
+for release in "${releases[@]}"; do
+    php=$(field "$release" php)
+    total=0
+    for logical in "${runtime[@]}" sql.js/sql-wasm.js sql.js/sql-wasm.wasm "releases/$release.js" \
+        "$(field "$release" archive)" "$(field "$release" provisionScript)" "$(field "$release" ini)" \
+        "php-$php/php.js" "php-$php/php.wasm"; do
+        total=$((total + ${size[$logical]}))
+    done
+    download[$release]=$total
+done
+downloads='{'
+for release in "${releases[@]}"; do
+    downloads+="\"$release\":${download[$release]},"
+done
+# In megabytes, as the worker writes them, so that both say the same.
+megabytes() {
+    node -p '(Number(process.argv[1]) / 1e6).toFixed(1)' "$1"
+}
+
 # The worker names every other file, so it is hashed after they are, with
 # the map in it.
 cp "$here/php-worker.js" "$work/php-worker.js"
 test "$(grep -c '^const FILES = {};$' "$work/php-worker.js")" = 1
-sed -i "s|^const FILES = {};\$|const FILES = ${map%,}};|" "$work/php-worker.js"
+test "$(grep -c '^const DOWNLOAD_BYTES = {};$' "$work/php-worker.js")" = 1
+sed -i -e "s|^const FILES = {};\$|const FILES = ${map%,}};|" \
+    -e "s|^const DOWNLOAD_BYTES = {};\$|const DOWNLOAD_BYTES = ${downloads%,}};|" "$work/php-worker.js"
 worker=$(hash=$(sha256sum "$work/php-worker.js" | cut -c1-16); echo "php-worker.$hash.js")
 mv "$work/php-worker.js" "$shared/$worker"
 
+# The release menu, one entry per release: its year is the one its clock
+# starts in. The shell's own release is marked as the current page.
+menu_entry() {
+    local release=$1 current=$2 year
+    year=$(node -e 'const r = require(process.argv[1]); process.stdout.write(String(new Date(r.clockStartMs).getUTCFullYear()))' \
+        "$release_files/$release.js")
+    printf '      <li><a href="../%s/"%s><span class="version">%s</span><span class="meta">%s · PHP %s</span><span class="size">%s MB</span></a></li>\n' \
+        "${release%.*}" "$([[ $release == "$current" ]] && echo ' aria-current="page"')" \
+        "$release" "$year" "$(field "$release" php)" "$(megabytes "${download[$release]}")"
+}
+
 # One shell and one service worker per release. Nothing else is per release:
 # the shell starts the shared worker with the release's name.
+marker='      <!-- assemble.sh lists the releases here -->'
+test "$(grep -cxF "$marker" "$here/index.html")" = 1
+test "$(grep -c "^const WORKER = '../wasm/php-worker.js';$" "$here/index.html")" = 1
 for release in "${releases[@]}"; do
     dir="$site/${release%.*}"
     mkdir -p "$dir"
     cp "$here/sw.js" "$dir/"
-    test "$(grep -c "^const WORKER = '../wasm/php-worker.js';$" "$here/index.html")" = 1
+    menu=$(for other in "${releases[@]}"; do menu_entry "$other" "$release"; done)
     sed -e "s|^const WORKER = '../wasm/php-worker.js';\$|const WORKER = '../wasm/$worker';|" \
-        -e "s|__RELEASE__|$release|g" "$here/index.html" > "$dir/index.html"
+        -e "s|__RELEASE__|$release|g" "$here/index.html" \
+        | MENU=$menu awk -v marker="$marker" '$0 == marker { print ENVIRON["MENU"]; next } { print }' > "$dir/index.html"
     ! grep -q __RELEASE__ "$dir/index.html"
+    test "$(grep -c '<li><a href=' "$dir/index.html")" = "${#releases[@]}"
 done
 
 # The licenses travel with the binaries: PHP's, Zend's and PCRE's ask for

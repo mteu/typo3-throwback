@@ -8,19 +8,24 @@
 // at a time, so requests queue here in the order they arrive.
 'use strict';
 
-// assemble.sh fills this in: each file's logical name, such as
-// "runtime/tar.js" or "php-4.4.9/php.wasm", and its published name next to
-// this worker, which carries a hash of its content. Pages lets browsers cache
-// files for ten minutes, so right after a deploy a fixed name could give a
-// new php.js and an old php.wasm. With hashed names, a stale shell asks for
-// old names, which are gone, and fails with a 404 instead.
+// assemble.sh fills these in. FILES maps each file's logical name, such as
+// "runtime/tar.js" or "php-4.4.9/php.wasm", to its published name next to
+// this worker, which carries a hash of its content, and its size in bytes.
+// Pages lets browsers cache files for ten minutes, so right after a deploy a
+// fixed name could give a new php.js and an old php.wasm. With hashed names,
+// a stale shell asks for old names, which are gone, and fails with a 404
+// instead. DOWNLOAD_BYTES is the size of every file a release loads, the
+// number its shell shows.
 const FILES = {};
-function published(name) {
+const DOWNLOAD_BYTES = {};
+function file(name) {
   if (!Object.prototype.hasOwnProperty.call(FILES, name)) {
     throw new Error(`${name} is not part of this site`);
   }
   return FILES[name];
 }
+const published = name => file(name)[0];
+const sizeOf = name => file(name)[1];
 
 // Only a release the site was assembled with, and only a site path a shell's
 // directory can have, both checked before anything loads.
@@ -33,8 +38,8 @@ if (!/^\d+\.\d+\.\d+$/.test(releaseName) || !/^(\/[\w.-]+)*\/site$/.test(urlPref
 importScripts(...['runtime/php-runtime.js', 'runtime/mysql-sqlite.js', 'runtime/tar.js', 'runtime/typo3-site.js',
   'runtime/step-installer.js', 'sql.js/sql-wasm.js', `releases/${releaseName}.js`].map(published));
 const release = self.Typo3Releases[releaseName];
-const inPhpBuild = file => published(`php-${release.php}/${file}`);
-importScripts(inPhpBuild('php.js'));
+const phpFile = name => `php-${release.php}/${name}`;
+importScripts(published(phpFile('php.js')));
 
 const STORE = 'state';
 const SAVE_DELAY_MS = 400;
@@ -52,22 +57,26 @@ function progress(text, fraction) {
 
 // The bar's share of each stage. PHP, provisioning and the unpacking run
 // synchronously and cannot report from inside, so they get fixed steps; the
-// archive download is the one stage that reports real bytes.
+// download is the one stage that reports real bytes.
 const DOWNLOAD_END = 0.4;
 const GUNZIP_END = 0.45;
 const BOOT_SHARE = 0.53;
 
+const megabytes = bytes => (bytes / 1e6).toFixed(1);
+
+// onBytes gets each chunk's length as it arrives. The reader yields the
+// bytes after any Content-Encoding, which are the file's own: the sizes
+// DOWNLOAD_BYTES adds up.
 async function fetchBytes(name, onBytes) {
   const response = await fetch(name);
   if (!response.ok) {
     throw new Error(`${name}: ${response.status}`);
   }
-  if (!onBytes || !response.body) {
-    return new Uint8Array(await response.arrayBuffer());
+  if (!response.body) {
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    onBytes(bytes.length);
+    return bytes;
   }
-  // Content-Length is the encoded size. A server that compresses on the fly
-  // sends more bytes than that through the reader, so the ratio is capped.
-  const total = Number(response.headers.get('Content-Length')) || 0;
   const chunks = [];
   let received = 0;
   const reader = response.body.getReader();
@@ -78,9 +87,7 @@ async function fetchBytes(name, onBytes) {
     }
     chunks.push(value);
     received += value.length;
-    if (total) {
-      onBytes(Math.min(received / total, 1));
-    }
+    onBytes(value.length);
   }
   const bytes = new Uint8Array(received);
   let offset = 0;
@@ -128,29 +135,49 @@ const saveSnapshot = snapshot => storage('readwrite', store => store.put(snapsho
 const clearSnapshot = () => storage('readwrite', store => store.delete('snapshot'));
 
 async function boot() {
-  progress(`loading PHP ${release.php}, SQLite and the TYPO3 ${release.release} archive`, 0.02);
-  // One message per percent is plenty for a bar.
+  // Both wasm files are fetched here rather than by their loaders, so that
+  // every byte of the download is counted. The scripts importScripts()
+  // loaded above are in already.
+  const fetched = [release.archive, release.provisionScript, release.ini, phpFile('php.wasm'), 'sql.js/sql-wasm.wasm'];
+  const total = DOWNLOAD_BYTES[release.release];
+  let received = total - fetched.reduce((sum, name) => sum + sizeOf(name), 0);
+  progress(`downloading ${megabytes(total)} MB: PHP ${release.php}, SQLite, and the TYPO3 ${release.release} archive`, 0.02);
+  // One message per percent is plenty for a bar. A server that compresses
+  // the archive on top of its gzip makes fetch() unpack it, which yields
+  // more bytes than the file has, so the count is capped.
   let reported = 0;
-  const reportDownload = ratio => {
-    const fraction = 0.02 + (DOWNLOAD_END - 0.02) * ratio;
+  const countDownload = length => {
+    received = Math.min(received + length, total);
+    const fraction = 0.02 + (DOWNLOAD_END - 0.02) * (received / total);
     if (fraction - reported >= 0.01) {
       reported = fraction;
-      progress(`downloading the TYPO3 ${release.release} archive`, fraction);
+      progress(`downloading ${megabytes(received)} of ${megabytes(total)} MB`, fraction);
     }
   };
-  const [tarGz, provisionScript, legacyIni, SQL, snapshot] = await Promise.all([
-    fetchBytes(published(release.archive), reportDownload),
-    fetchBytes(published(release.provisionScript)),
-    fetchBytes(published(release.ini)),
-    initSqlJs({ locateFile: file => published(`sql.js/${file}`) }),
+  const fetchCounted = name => fetchBytes(published(name), countDownload);
+  const [tarGz, provisionScript, legacyIni, phpWasm, SQL, snapshot] = await Promise.all([
+    fetchCounted(release.archive),
+    fetchCounted(release.provisionScript),
+    fetchCounted(release.ini),
+    fetchCounted(phpFile('php.wasm')),
+    fetchCounted('sql.js/sql-wasm.wasm').then(wasmBinary => initSqlJs({ wasmBinary })),
     loadSnapshot().catch(() => null),
   ]);
+  const phpModule = await WebAssembly.compile(phpWasm);
   progress('unpacking the archive', DOWNLOAD_END);
   const tarball = await gunzip(tarGz);
   site = await Typo3Site.boot({
     release,
     PhpRuntime,
-    createPhp: options => createPhp({ ...options, locateFile: inPhpBuild }),
+    // php.js takes the wasm from a caller only through this hook, whose
+    // promise cannot fail: a failure is reported here, as boot() reports it.
+    createPhp: options => createPhp({
+      ...options,
+      instantiateWasm: (imports, receive) => {
+        WebAssembly.instantiate(phpModule, imports).then(receive, reportFailure);
+        return {};
+      },
+    }),
     MysqlOnSqlite,
     SQL,
     readTar,
@@ -168,14 +195,18 @@ async function boot() {
   postMessage({ type: 'ready', restored: site.restored, provisionOutput: site.provisionOutput || '' });
 }
 
+function saveNow() {
+  clearTimeout(saveTimer);
+  saveTimer = null;
+  saving = saveSnapshot(site.snapshot()).catch(error => progress(`could not save: ${error}`));
+}
+
 function scheduleSave() {
   if (resetting) {
     return;
   }
   clearTimeout(saveTimer);
-  saveTimer = setTimeout(() => {
-    saving = saveSnapshot(site.snapshot()).catch(error => progress(`could not save: ${error}`));
-  }, SAVE_DELAY_MS);
+  saveTimer = setTimeout(saveNow, SAVE_DELAY_MS);
 }
 
 self.onmessage = async event => {
@@ -193,6 +224,13 @@ self.onmessage = async event => {
     } catch (error) {
       port.postMessage({ error: String(error && error.stack || error) });
     }
+  } else if (message.type === 'flush') {
+    // The shell is about to leave, which ends this worker.
+    if (saveTimer !== null && !resetting) {
+      saveNow();
+    }
+    await saving;
+    postMessage({ type: 'flushed' });
   } else if (message.type === 'reset') {
     // No save may land after the delete: none scheduled from now on, and
     // the one in flight, if any, finishes first.
@@ -204,8 +242,12 @@ self.onmessage = async event => {
   }
 };
 
+function reportFailure(error) {
+  postMessage({ type: 'failed', message: String(error && error.stack || error) });
+}
+
 // Last, so every helper above exists when it runs.
 const booted = boot().catch(error => {
-  postMessage({ type: 'failed', message: String(error && error.stack || error) });
+  reportFailure(error);
   throw error;
 });
