@@ -33,12 +33,16 @@ $link = mysql_connect('db', 'typo3', 'typo3');
 restore_error_handler();
 expect('mysql_connect() gives a link', is_resource($link) && get_resource_type($link) === 'mysql link');
 // PHP 5.5 deprecated ext/mysql, and says so on every connect. A client
-// version other than the header's 3.23 would add a mismatch warning.
+// version other than the header's 5.5 would add a mismatch warning.
 expect('connecting raises only the deprecation of ext/mysql', count($errors) === 1 && $errors[0][0] === E_DEPRECATED
     && strpos($errors[0][1], 'The mysql extension is deprecated') !== false);
-expect('the client is 3.23.49, the server what the shim answers as',
-    mysql_get_client_info() === '3.23.49' && mysql_get_server_info($link) === $_GET['server']);
-expect('mysql_set_charset() is not built: 4.5.40 sends SET NAMES as a query', !function_exists('mysql_set_charset'));
+expect('the client is 5.5.62, the server what the shim answers as',
+    mysql_get_client_info() === '5.5.62' && mysql_get_server_info($link) === $_GET['server']);
+// As on mysqlnd, which the official image builds ext/mysql on: a 4.1 client
+// or later has mysql_set_charset() and no mysql_create_db().
+expect('mysql_set_charset() is built and mysql_create_db() is not, as in Docker',
+    function_exists('mysql_set_charset') && !function_exists('mysql_create_db'));
+expect('mysql_client_encoding() is the server\'s charset', mysql_client_encoding($link) === $_GET['charset']);
 
 if (!@mysql_select_db('probe', $link)) {
     mysql_query('CREATE DATABASE probe', $link);

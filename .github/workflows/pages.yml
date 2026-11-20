@@ -47,6 +47,7 @@ on:
       - 'vendor-src/php-4.4.9/**'
       - 'vendor-src/php-5.6.40/**'
       - 'vendor-src/libxml2-2.9.14/**'
+      - 'vendor-src/openssl-1.0.2u/**'
       - 'vendor-src/typo3-3.3.0/**'
       - 'vendor-src/typo3-3.8.1/**'
       - 'vendor-src/typo3-4.0.13/**'

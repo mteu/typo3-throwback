@@ -63,6 +63,19 @@
     return concatBytes(chunks);
   }
 
+  // Each argument NUL-terminated, with no terminator after the last: an
+  // argument may be empty.
+  function encodeArgvBlock(args) {
+    const chunks = [];
+    for (const arg of args) {
+      if (String(arg).includes('\0')) {
+        throw new RangeError('Invalid argument: it holds a NUL byte');
+      }
+      chunks.push(encodeLatin1(String(arg)), new Uint8Array(1));
+    }
+    return concatBytes(chunks);
+  }
+
   function copyIn(module, bytes) {
     const pointer = module._malloc(Math.max(bytes.length, 1));
     module.HEAPU8.set(bytes, pointer);
@@ -101,6 +114,7 @@
         writeU32(response.link);
         writeStr(response.serverVersion);
         writeStr(response.hostInfo);
+        writeStr(response.charset);
       } else {
         writeU32(response.fields.length);
         writeU32(response.rows.length);
@@ -147,12 +161,29 @@
     return pointer;
   }
 
+  // What OpenSSL reads when PHP generates a key or a request without being
+  // told how: the [ req ] defaults of Debian stretch's /etc/ssl/openssl.cnf,
+  // which the Docker images' OpenSSL reads. php-5.6.40/sapi.c points
+  // OPENSSL_CONF at this file, beside php.ini. PHP 4 has no ext/openssl and
+  // never reads it.
+  const OPENSSL_CNF = [
+    '[ req ]',
+    'default_bits = 2048',
+    'default_md = sha256',
+    'distinguished_name = req_distinguished_name',
+    'string_mask = utf8only',
+    '',
+    '[ req_distinguished_name ]',
+    '',
+  ].join('\n');
+
   class PhpRuntime {
     // moduleFactory: the MODULARIZE'd factory build.sh emits.
     // iniSearchPath: where PHP looks for php.ini (a directory list).
-    // iniText: written to <iniSearchPath>/php.ini first, when given. A
-    // Uint8Array is written as is; pass file contents that way, since an ini
-    // file read as text may hold characters ISO-8859-1 cannot (UTF-8 comments).
+    // iniText: written to <iniSearchPath>/php.ini first, when given, with
+    // OpenSSL's openssl.cnf beside it. A Uint8Array is written as is; pass
+    // file contents that way, since an ini file read as text may hold
+    // characters ISO-8859-1 cannot (UTF-8 comments).
     // mysql: the server ext/mysql talks to, such as runtime/mysql-sqlite.js;
     // without one, every mysql_connect() fails as if no server were running.
     // clock: a function returning the time in milliseconds since the epoch,
@@ -174,6 +205,7 @@
         module.FS.mkdirTree(iniSearchPath);
         module.FS.writeFile(`${iniSearchPath}/php.ini`,
           iniText instanceof Uint8Array ? iniText : encodeLatin1(iniText));
+        module.FS.writeFile(`${iniSearchPath}/openssl.cnf`, encodeLatin1(OPENSSL_CNF));
       }
       module.phpResponse = newCollector();
       const path = copyIn(module, concatBytes([encodeLatin1(iniSearchPath), new Uint8Array(1)]));
@@ -207,7 +239,9 @@
     }
 
     // headers: request headers by name. server: extra or overriding CGI
-    // variables. body: a string (ISO-8859-1) or a Uint8Array.
+    // variables. body: a string (ISO-8859-1) or a Uint8Array. argv: the
+    // arguments a script written for the CLI expects after its own path, as
+    // PHP's $argv; only PHP 5.6.40's loop takes them.
     request({
       method = 'GET',
       scriptFilename,
@@ -216,6 +250,7 @@
       headers = {},
       body = null,
       server = {},
+      argv = null,
     }) {
       if (this.busy) {
         throw new Error('A request is already running on this instance');
@@ -257,6 +292,18 @@
       Object.assign(env, server);
 
       const module = this.module;
+      if (argv !== null) {
+        if (typeof module._php_wasm_set_argv !== 'function') {
+          throw new Error('This PHP build takes no command line');
+        }
+        const argvBytes = encodeArgvBlock([scriptFilename, ...argv]);
+        const argvPointer = copyIn(module, argvBytes);
+        const failedArgv = module._php_wasm_set_argv(argvPointer, argvBytes.length);
+        module._free(argvPointer);
+        if (failedArgv) {
+          throw new Error('PHP could not take the command line');
+        }
+      }
       const envBytes = encodeEnvBlock(env);
       const envPointer = copyIn(module, envBytes);
       const bodyPointer = copyIn(module, bodyBytes);

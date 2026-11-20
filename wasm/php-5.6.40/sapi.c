@@ -1,7 +1,8 @@
 /*
  * A request-loop SAPI for PHP 5.6.40 under Emscripten. It has the entry
  * points and the request block of php-4.4.9/sapi.c, so runtime/php-runtime.js
- * drives either interpreter the same way.
+ * drives either interpreter the same way. One entry point is its own:
+ * php_wasm_set_argv(), a command line for a script written for the CLI.
  *
  * Modelled on the FastCGI loop in sapi/cgi/cgi_main.c: php_module_startup()
  * once, then php_request_startup(), php_execute_script() and
@@ -57,6 +58,24 @@ static unsigned int request_env_length = 0;
 static const char *request_body = NULL;
 static unsigned int request_body_length = 0;
 static unsigned int request_body_read = 0;
+
+/* The command line of the next request, as the CLI would give its script:
+   the script's path, then its arguments. Set by php_wasm_set_argv(), used by
+   one request and dropped after it. */
+static int request_argc = 0;
+static char **request_argv = NULL;
+
+static void drop_request_argv(void)
+{
+    int i;
+
+    for (i = 0; i < request_argc; i++) {
+        free(request_argv[i]);
+    }
+    free(request_argv);
+    request_argc = 0;
+    request_argv = NULL;
+}
 
 static char *find_request_env(const char *name, size_t name_length)
 {
@@ -222,6 +241,20 @@ EMSCRIPTEN_KEEPALIVE int php_wasm_startup(const char *ini_search_path)
     sapi_startup(&wasm_sapi_module);
     wasm_sapi_module.php_ini_path_override = strdup(ini_search_path);
 
+    /* OpenSSL's configuration, where openssl_pkey_new() reads its key size,
+       lives beside php.ini: runtime/php-runtime.js writes both. ext/openssl
+       reads OPENSSL_CONF once, at module startup. */
+    {
+        char *openssl_conf = malloc(strlen(ini_search_path) + sizeof("/openssl.cnf"));
+        if (openssl_conf == NULL) {
+            return 1;
+        }
+        strcpy(openssl_conf, ini_search_path);
+        strcat(openssl_conf, "/openssl.cnf");
+        setenv("OPENSSL_CONF", openssl_conf, 1);
+        free(openssl_conf);
+    }
+
     /* A CGI SAPI fills $_ENV from the process environment, which a CGI
        server sets to the request. Here the request block plays that part,
        so $_ENV matches what a server would give, and Emscripten's made-up
@@ -231,6 +264,44 @@ EMSCRIPTEN_KEEPALIVE int php_wasm_startup(const char *ini_search_path)
     if (wasm_sapi_module.startup(&wasm_sapi_module) == FAILURE) {
         return 1;
     }
+    return 0;
+}
+
+/*
+ * Gives the next request a command line: args are its arguments, each
+ * NUL-terminated, args_length bytes in total, the script's path first.
+ * PHP sets the globals $argv and $argc only when the SAPI has a command line
+ * (main/php_variables.c:555-610), which a web request does not. A script
+ * written for the CLI, such as 6.2/provision.php, reads its mode from
+ * $argv[1]. Returns 0 on success.
+ */
+EMSCRIPTEN_KEEPALIVE int php_wasm_set_argv(const char *args, unsigned int args_length)
+{
+    const char *arg = args;
+    const char *end = args + args_length;
+    int count = 0;
+    int i;
+
+    drop_request_argv();
+    while (arg < end) {
+        arg += strlen(arg) + 1;
+        count++;
+    }
+    request_argv = calloc(count + 1, sizeof(char *));
+    if (request_argv == NULL) {
+        return 1;
+    }
+    arg = args;
+    for (i = 0; i < count; i++) {
+        request_argv[i] = strdup(arg);
+        if (request_argv[i] == NULL) {
+            request_argc = i;
+            drop_request_argv();
+            return 1;
+        }
+        arg += strlen(arg) + 1;
+    }
+    request_argc = count;
     return 0;
 }
 
@@ -274,6 +345,8 @@ EMSCRIPTEN_KEEPALIVE int php_wasm_request(const char *env, unsigned int env_leng
        out, main/SAPI.c:455), so each SAPI sets it, as
        sapi/apache2handler/sapi_apache2.c does. */
     SG(sapi_headers).http_response_code = 200;
+    SG(request_info).argc = request_argc;
+    SG(request_info).argv = request_argv;
 
     zend_first_try {
         if (php_request_startup(TSRMLS_C) == FAILURE) {
@@ -319,6 +392,9 @@ EMSCRIPTEN_KEEPALIVE int php_wasm_request(const char *env, unsigned int env_leng
     SG(request_info).request_uri = NULL;
     SG(request_info).path_translated = NULL;
     SG(request_info).content_type = NULL;
+    SG(request_info).argc = 0;
+    SG(request_info).argv = NULL;
+    drop_request_argv();
     request_env = NULL;
     request_env_length = 0;
     request_body = NULL;

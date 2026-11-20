@@ -58,7 +58,7 @@ check_bailout 'Fatal error: Call to undefined function: undefined_function_call(
 
 echo "== mail() through /bin/true, as every Docker stack's sendmail_path"
 "${php[@]}" "$here/probe/mail.php"
-"${php[@]}" -d sendmail_path=/usr/sbin/sendmail "$here/probe/mail.php" refused
+"${php[@]}" -d sendmail_path=sendmail "$here/probe/mail.php" refused
 
 echo "== request loop: many requests in one instance"
 node "$here/probe/request-loop.cjs" "$php4/sapi-node" "$work/request-loop" 4.4.9
@@ -81,7 +81,7 @@ echo "== PHP 5's bundled extensions: ctype, filter, hash, json, tokenizer, zlib"
 
 echo "== mail() through /bin/true, on PHP 5"
 "${php[@]}" "$here/probe/mail.php"
-"${php[@]}" -d sendmail_path=/usr/sbin/sendmail "$here/probe/mail.php" refused
+"${php[@]}" -d sendmail_path=sendmail "$here/probe/mail.php" refused
 
 echo "== request loop on PHP 5: many requests, php://input, the raw-POST deprecation, uploads, ext/mysql, sessions, the clock"
 node "$here/probe/request-loop.cjs" "$php5/sapi-node" "$work/request-loop-5" 5.6.40
@@ -169,8 +169,8 @@ for release in "${releases[@]}"; do
             echo "== GD, FreeType and zlib on PHP 5, with a font from the 4.5.40 source"
             "${php[@]}" "$here/probe/gd.php" "$tree/t3lib/fonts/vera.ttf"
 
-            # What a default site takes where the build has no function to call.
-            echo "== 4.5.40's random bytes and charset conversion, with no openssl, mcrypt, iconv or mbstring"
+            # Where the core can choose, what a default site takes on this build.
+            echo "== 4.5.40's random bytes from openssl, and charset conversion with no iconv or mbstring"
             "${php[@]}" -d error_reporting=22519 "$here/probe/core-functions-5.php" "$tree"
             ;;
         *)

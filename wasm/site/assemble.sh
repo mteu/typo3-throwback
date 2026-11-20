@@ -103,7 +103,8 @@ done
 
 # The licenses travel with the binaries: PHP's, Zend's and PCRE's ask for
 # their notices in any binary redistribution, and so do the MIT licenses.
-# libjpeg's and FreeType's ask for a credit line in the documentation. Each
+# libjpeg's and FreeType's ask for a credit line in the documentation, and
+# OpenSSL's two licenses for an acknowledgement in any redistribution. Each
 # interpreter the releases name gets its paragraph, and each license text its
 # build put in out/licences/ is printed once.
 php_paragraph() {
@@ -136,10 +137,17 @@ PHP 5.6.40 (php-5.6.40/php.js, php.wasm), PHP License 3.01
     under the MIT license in libxml2-Copyright. It was compiled with
     Emscripten, whose runtime and musl libc it contains (MIT and
     University of Illinois/NCSA).
+    It links OpenSSL 1.0.2u, under the OpenSSL and SSLeay licenses in
+    openssl-LICENSE.
+    This product includes software developed by the OpenSSL Project for
+    use in the OpenSSL Toolkit (http://www.openssl.org/).
+    This product includes cryptographic software written by Eric Young
+    (eay@cryptsoft.com).
     It includes GD 2.1 as bundled in PHP, under the GD license in
-    gd-COPYING, and links these libraries, built by Emscripten's ports:
-    zlib (zlib license), libpng (libpng license), libjpeg 9f and FreeType
-    (FreeType License).
+    gd-COPYING, and libmagic and libzip as bundled in PHP, under the BSD
+    licenses in libmagic-LICENSE and libzip-LICENSE. It links these
+    libraries, built by Emscripten's ports: zlib (zlib license), libpng
+    (libpng license), libjpeg 9f and FreeType (FreeType License).
 EOF
             ;;
         *)

@@ -139,11 +139,9 @@ const workRoot = path.resolve(process.argv[2]);
       });
       assert.strictEqual(response.status, 200);
       // The Install Tool looks for ImageMagick in the usual places whatever
-      // [GFX][im] says, and exec() cannot start a process here. PHP logs it;
-      // display_errors is off, so the page does not show it.
-      for (const line of response.log) {
-        assert.match(line, /exec\(\).*Unable to fork \[\/usr\/bin\/(convert|composite|identify)\]/);
-      }
+      // [GFX][im] says. Nothing is there, and exec() answers for a program
+      // that is not there as sh does (native/popen.c), so PHP logs nothing.
+      assert.deepStrictEqual(response.log, []);
       return { html: response.text, text: response.text.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ') };
     };
 
