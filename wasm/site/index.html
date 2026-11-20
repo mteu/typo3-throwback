@@ -35,6 +35,8 @@
     font: 14px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif;
   }
   header {
+    position: relative;
+    z-index: 1;
     display: flex;
     flex-wrap: wrap;
     align-items: center;
@@ -43,7 +45,59 @@
     background: var(--bar);
     border-bottom: 1px solid var(--line);
   }
-  h1 { margin: 0; font-size: 15px; font-weight: 600; white-space: nowrap; }
+  h1 { display: inline; margin: 0; font-size: 15px; font-weight: 600; white-space: nowrap; }
+  .versions { position: relative; }
+  .versions > summary {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 3px 10px;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    cursor: pointer;
+    list-style: none;
+  }
+  .versions > summary::-webkit-details-marker { display: none; }
+  .versions > summary::after {
+    content: "";
+    width: 6px;
+    height: 6px;
+    border-right: 2px solid currentColor;
+    border-bottom: 2px solid currentColor;
+    transform: translateY(-2px) rotate(45deg);
+  }
+  .versions > summary:hover, .versions[open] > summary { border-color: var(--accent); color: var(--accent); }
+  .versions ul {
+    position: absolute;
+    /* Above the disabled buttons, whose opacity lifts them onto a layer of their own. */
+    z-index: 1;
+    top: calc(100% + 6px);
+    left: 0;
+    width: max-content;
+    min-width: 260px;
+    max-width: calc(100vw - 32px);
+    margin: 0;
+    padding: 4px;
+    list-style: none;
+    background: var(--bar);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    box-shadow: 0 8px 24px rgb(0 0 0 / 0.15);
+  }
+  .versions a {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 0 16px;
+    padding: 6px 10px;
+    border-radius: 6px;
+    color: var(--text);
+    text-decoration: none;
+  }
+  .versions a:hover, .versions a:focus-visible, .versions a[aria-current="page"] { background: var(--bg); outline: none; }
+  .versions a:focus-visible { box-shadow: inset 0 0 0 2px var(--accent); }
+  .versions .version { font-weight: 600; }
+  .versions .meta { color: var(--muted); font-size: 12px; }
+  .versions .size { grid-row: 1 / span 2; grid-column: 2; align-self: center; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
   nav { display: flex; flex-wrap: wrap; gap: 6px; }
   button, .address {
     font: inherit;
@@ -100,7 +154,12 @@
 </head>
 <body>
 <header>
-  <h1>TYPO3 v__RELEASE__</h1>
+  <details class="versions" id="versions">
+    <summary title="Switch to another release"><h1>TYPO3 v__RELEASE__</h1></summary>
+    <ul>
+      <!-- assemble.sh lists the releases here -->
+    </ul>
+  </details>
   <nav aria-label="Site">
     <button type="button" data-path="" disabled>Frontend</button>
     <button type="button" data-path="typo3/index.php" data-own-tab disabled title="Opens in a tab of its own. Keep this site open in a tab: that is where PHP runs.">Backend ↗</button>
@@ -123,14 +182,14 @@
       <p class="loader-title" id="loader-title">Starting TYPO3 v__RELEASE__</p>
       <div class="bar" id="bar" role="progressbar" aria-labelledby="loader-title" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><div id="fill"></div></div>
       <p class="loader-text" id="loader-text">Starting…</p>
-      <p class="loader-note">The first visit downloads PHP and TYPO3 and sets the site up. Later visits restore it from this browser.</p>
+      <p class="loader-note">Each visit downloads PHP, SQLite, and TYPO3 unless your browser still has them cached. Your site's data stays in this browser until you reset it or the browser clears it.</p>
     </div>
   </div>
 </div>
 <script>
 'use strict';
 // site/assemble.sh writes one copy of this page per release: it fills in
-// the release's version and the worker's hashed name.
+// the release's version, the list of releases and the worker's hashed name.
 const RELEASE = '__RELEASE__';
 const WORKER = '../wasm/php-worker.js';
 (async () => {
@@ -180,6 +239,66 @@ const WORKER = '../wasm/php-worker.js';
   let worker = null;
   let uiEnabled = false;
 
+  // The release menu's entries are plain links, so a modified click opens
+  // another release in a tab of its own: each runs its own PHP. A plain
+  // click leaves this page, which ends its PHP worker. That worker saves the
+  // site a moment after each request, so a save still pending is written
+  // first.
+  const versions = document.getElementById('versions');
+  const closeVersions = () => {
+    versions.open = false;
+  };
+  document.addEventListener('click', event => {
+    if (versions.open && !versions.contains(event.target)) {
+      closeVersions();
+    }
+  });
+  // A click into the iframe reaches the frame's document, not this one.
+  window.addEventListener('blur', closeVersions);
+  versions.addEventListener('keydown', event => {
+    if (event.key === 'Escape' && versions.open) {
+      closeVersions();
+      versions.querySelector('summary').focus();
+    }
+  });
+  const FLUSH_TIMEOUT_MS = 3000;
+  const flushSave = () => new Promise(resolve => {
+    const done = event => {
+      if (event && event.data.type !== 'flushed') {
+        return;
+      }
+      worker.removeEventListener('message', done);
+      resolve();
+    };
+    worker.addEventListener('message', done);
+    worker.postMessage({ type: 'flush' });
+    // A worker that has failed never answers.
+    setTimeout(done, FLUSH_TIMEOUT_MS);
+  });
+  for (const link of versions.querySelectorAll('a')) {
+    link.addEventListener('click', async event => {
+      const opensElsewhere = event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey;
+      if (opensElsewhere || link.getAttribute('aria-current') === 'page') {
+        closeVersions();
+        if (!opensElsewhere) {
+          event.preventDefault();
+        }
+        return;
+      }
+      if (!worker) {
+        return;
+      }
+      event.preventDefault();
+      if (backendTab && !backendTab.closed
+        && !confirm('The backend tab runs on this page. Switch to another release anyway?')) {
+        return;
+      }
+      say('Saving the site…');
+      await flushSave();
+      location.href = link.href;
+    });
+  }
+
   // sw.js asks every shell with each request for site/. The PHP worker
   // answers on the port the request came with; a follower declines at once.
   navigator.serviceWorker.addEventListener('message', event => {
@@ -209,7 +328,8 @@ const WORKER = '../wasm/php-worker.js';
       worker.addEventListener('message', event => {
         const message = event.data;
         if (message.type === 'progress') {
-          say(message.text);
+          // The worker's lines are written to follow a colon, as in a log.
+          say(message.text.charAt(0).toUpperCase() + message.text.slice(1));
           if (typeof message.fraction === 'number') {
             showProgress(message.fraction);
           }
@@ -254,8 +374,9 @@ const WORKER = '../wasm/php-worker.js';
   // the backend gets a window of its own. A shell has to stay open, because
   // the leader's worker runs PHP.
   const backendPath = /\/site\/typo3\/(?!install\/)/;
+  let backendTab = null;
   const openOwnTab = path => {
-    window.open(`site/${path}`, 'typo3-backend');
+    backendTab = window.open(`site/${path}`, 'typo3-backend');
   };
   frame.addEventListener('load', () => {
     let shown = null;
