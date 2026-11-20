@@ -314,6 +314,10 @@ async function check(label, test) {
       // documentation of a binary.
       assert.match(text, /This software is based in part on the work of the Independent JPEG\s+Group\./);
       assert.match(text, /Portions of this software are copyright \(C\) 1996-2026 The FreeType Project/);
+      // The sql.js the site ships, which Renovate updates.
+      const sqlJs = require(path.join(__dirname, '..', 'node_modules', 'sql.js', 'package.json')).version;
+      assert.ok(text.includes(`sql.js ${sqlJs} (sql-wasm.js, sql-wasm.wasm), MIT`),
+        `LICENSES.txt does not name sql.js ${sqlJs}`);
       // The licence files the release archive carries, from its LICENCES.md.
       assert.match(text, spec.archiveLicences);
     });
