@@ -76,7 +76,7 @@ ARG BASE_REGISTRY=docker.io/library
 # images were built puts their security-updated packages out of reach again.
 ARG DEBIAN_SNAPSHOT=20260901T000000Z
 
-FROM ${BASE_REGISTRY}/debian@sha256:99cdf7792e25416bd801861ccd8e2fb27fb527b25e8d9a8704ebc3ead2015675 AS php-build
+FROM ${BASE_REGISTRY}/debian@sha256:9c6e381421d0f48d1b8133e573f33c185ee16cbf505eda9c4a8a4791b25ea8a6 AS php-build
 
 # Both hosts serve Release files signed by keys the base image already trusts, so
 # signature verification stays on and only the freshness check is relaxed — an
@@ -193,7 +193,7 @@ RUN set -eux; \
 # Same BASE_REGISTRY selector as stage 1. No re-declaration needed: an ARG
 # declared before the first FROM is global and in scope for every stage's FROM
 # line — it would only need repeating to use it in an instruction *inside* a stage.
-FROM ${BASE_REGISTRY}/debian@sha256:f313b4bd62667092a59b3a664d7d3ab8b5e65f41675f48e81455a15dc5abe792 AS runtime
+FROM ${BASE_REGISTRY}/debian@sha256:9c6e381421d0f48d1b8133e573f33c185ee16cbf505eda9c4a8a4791b25ea8a6 AS runtime
 
 # Same apt pin as the build stage, for the same reason.
 ARG DEBIAN_SNAPSHOT
