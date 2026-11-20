@@ -63,6 +63,9 @@ done
 for name in sql-wasm.js sql-wasm.wasm; do
     publish "sql.js/$name" "$wasm/node_modules/sql.js/dist/$name"
 done
+# Named in LICENSES.txt as installed, so an update cannot leave it stale.
+sql_js_version=$(node -p 'require(require("path").resolve(process.argv[1])).version' "$wasm/node_modules/sql.js/package.json")
+[[ $sql_js_version =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
 
 interpreters=()
 for release in "${releases[@]}"; do
@@ -184,8 +187,9 @@ EOF
     Group.
     Portions of this software are copyright (C) 1996-2026 The FreeType Project
     (www.freetype.org). All rights reserved.
-
-sql.js 1.14.2 (sql-wasm.js, sql-wasm.wasm), MIT
+EOF
+    printf '\nsql.js %s (sql-wasm.js, sql-wasm.wasm), MIT\n' "$sql_js_version"
+    cat <<'EOF'
     It compiles SQLite, which is in the public domain.
 
 Everything else on this site comes from https://github.com/mteu/typo3-throwback
