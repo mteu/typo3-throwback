@@ -6,6 +6,6 @@
     "sql.js": "1.17.0"
   },
   "devDependencies": {
-    "playwright": "1.63.0"
+    "playwright": "1.65.1"
   }
 }
