@@ -160,14 +160,14 @@ jobs:
       # build's work dir.
       - name: Restore PHP 4.4.9
         id: php4
-        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: ${{ runner.temp }}/wasm/php-4.4.9/out
           key: wasm-php-4.4.9-${{ runner.os }}-${{ env.PINNED_EMSDK_COMMIT }}-${{ hashFiles('wasm/php-4.4.9/**', 'wasm/native/**', 'vendor-src/php-4.4.9/**') }}
 
       - name: Restore PHP 5.6.40
         id: php5
-        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: ${{ runner.temp }}/wasm/php-5.6.40/out
           key: wasm-php-5.6.40-${{ runner.os }}-${{ env.PINNED_EMSDK_COMMIT }}-${{ hashFiles('wasm/php-5.6.40/**', 'wasm/native/**', 'vendor-src/php-5.6.40/**', 'vendor-src/libxml2-2.9.14/**', 'vendor-src/openssl-1.0.2u/**') }}
@@ -220,7 +220,7 @@ jobs:
 
       - name: Cache PHP 4.4.9
         if: steps.php4.outputs.cache-hit != 'true'
-        uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: ${{ runner.temp }}/wasm/php-4.4.9/out
           key: ${{ steps.php4.outputs.cache-primary-key }}
@@ -235,7 +235,7 @@ jobs:
 
       - name: Cache PHP 5.6.40
         if: steps.php5.outputs.cache-hit != 'true'
-        uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: ${{ runner.temp }}/wasm/php-5.6.40/out
           key: ${{ steps.php5.outputs.cache-primary-key }}
