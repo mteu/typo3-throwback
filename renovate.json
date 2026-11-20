@@ -1,9 +1,17 @@
 {
-    "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-    "extends": [
-        "github>mteu/renovate-configuration"
-    ],
-    "reviewers": [
-        "mteu"
-    ]
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["github>mteu/renovate-configuration"],
+  "reviewers": ["mteu"],
+  "packageRules": [
+    {
+      "description": "The Docker stacks stay on their historic images",
+      "matchManagers": ["dockerfile", "docker-compose"],
+      "enabled": false
+    },
+    {
+      "description": "sql.js runs the MySQL shim: merge by hand once check.sh is green",
+      "matchPackageNames": ["sql.js"],
+      "automerge": false
+    }
+  ]
 }
