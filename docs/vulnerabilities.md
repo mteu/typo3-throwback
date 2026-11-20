@@ -22,9 +22,9 @@ Numbers go up even when an image does not change, because new CVEs are published
 against old software every week. The *Change* column says which of the two it
 was: *same image* means the advisory data grew, *image rebuilt* means the image did.
 
-## Latest scan: 2026-11-08
+## Latest scan: 2026-11-20
 
-Syft 1.55.0, Grype 0.121.0, advisory data built 2026-11-07T06:18:48Z.
+Syft 1.55.0, Grype 0.121.0, advisory data built 2026-11-20T06:21:00Z.
 
 | Image | Base OS | Critical | High | Medium | Low | Negligible | Unknown | Total | Change |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
@@ -33,8 +33,8 @@ Syft 1.55.0, Grype 0.121.0, advisory data built 2026-11-07T06:18:48Z.
 | `typo3:4.0.13` | `debian 9.6` | 63 | 183 | 142 | 89 | 289 | 1 | **767** | ±0, image rebuilt |
 | `typo3:4.5.40` | `debian 9.6` | 61 | 168 | 113 | 88 | 289 | 1 | **720** | ±0, image rebuilt |
 | `typo3:6.2.31` | `debian 9.6` | 60 | 168 | 116 | 87 | 289 | 1 | **721** | ±0, image rebuilt |
-| `mysql:5.5` | `debian 9.9` | 19 | 73 | 403 | 77 | 42 | 0 | **614** | ±0, same image |
-| `nginx:1.27.5` | `alpine 3.21.3` | 23 | 93 | 71 | 13 | 0 | 1 | **201** | ±0, same image |
+| `mysql:5.5` | `debian 9.9` | 19 | 77 | 442 | 77 | 42 | 0 | **657** | +43, same image |
+| `nginx:1.27.5` | `alpine 3.21.3` | 28 | 96 | 72 | 13 | 0 | 1 | **210** | +9, same image |
 
 ## By package type
 
@@ -60,9 +60,9 @@ official images. `declared` is a component listed by hand, as described below.
 | `typo3:6.2.31` | `binary` | 7 | 17 | 13 | 2 | 0 | 0 | **39** |
 | `typo3:6.2.31` | `deb` | 53 | 148 | 95 | 85 | 289 | 1 | **671** |
 | `typo3:6.2.31` | `declared` | 0 | 3 | 8 | 0 | 0 | 0 | **11** |
-| `mysql:5.5` | `binary` | 5 | 18 | 377 | 58 | 0 | 0 | **458** |
+| `mysql:5.5` | `binary` | 5 | 22 | 416 | 58 | 0 | 0 | **501** |
 | `mysql:5.5` | `deb` | 14 | 55 | 26 | 19 | 42 | 0 | **156** |
-| `nginx:1.27.5` | `apk` | 23 | 93 | 71 | 13 | 0 | 1 | **201** |
+| `nginx:1.27.5` | `apk` | 28 | 96 | 72 | 13 | 0 | 1 | **210** |
 
 ## Trend
 
@@ -70,6 +70,7 @@ Distinct vulnerabilities per image at each scan, newest first. Critical ones are
 
 | Scan | `typo3:3.3.0` | `typo3:3.8.1` | `typo3:4.0.13` | `typo3:4.5.40` | `typo3:6.2.31` | `mysql:5.5` | `nginx:1.27.5` |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 2026-11-20 | 653 (80) | 777 (63) | 767 (63) | 720 (61) | 721 (60) | 657 (19) | 210 (28) |
 | 2026-11-08 | 653 (80) | 777 (63) | 767 (63) | 720 (61) | 721 (60) | 614 (19) | 201 (23) |
 | 2026-11-07 | 653 (80) | 777 (63) | 767 (63) | 720 (61) | 721 (60) | 614 (19) | 201 (23) |
 
@@ -182,7 +183,7 @@ Programs found by their version string are grouped by product, so `php-cli` and
 
 | Package | Type | Critical | High | Medium | Low | Negligible | Unknown | Total |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| `mysql` | `binary` | 5 | 18 | 377 | 58 | 0 | 0 | **458** |
+| `mysql` | `binary` | 5 | 22 | 416 | 58 | 0 | 0 | **501** |
 | `glibc` | `deb` | 7 | 6 | 5 | 4 | 10 | 0 | **32** |
 | `openldap` | `deb` | 1 | 16 | 1 | 0 | 4 | 0 | **22** |
 | `sqlite3` | `deb` | 1 | 10 | 4 | 0 | 2 | 0 | **17** |
@@ -199,14 +200,14 @@ Programs found by their version string are grouped by product, so `php-cli` and
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | `curl` | `apk` | 11 | 30 | 16 | 1 | 0 | 0 | **58** |
 | `openssl` | `apk` | 6 | 17 | 14 | 5 | 0 | 0 | **42** |
-| `expat` | `apk` | 0 | 14 | 17 | 1 | 0 | 0 | **32** |
+| `expat` | `apk` | 0 | 15 | 16 | 1 | 0 | 0 | **32** |
+| `nginx` | `apk` | 6 | 4 | 6 | 0 | 0 | 0 | **16** |
 | `libpng` | `apk` | 0 | 8 | 4 | 0 | 0 | 1 | **13** |
-| `nginx` | `apk` | 1 | 5 | 5 | 0 | 0 | 0 | **11** |
 | `tiff` | `apk` | 0 | 4 | 2 | 3 | 0 | 0 | **9** |
 | `libxml2` | `apk` | 2 | 5 | 0 | 1 | 0 | 0 | **8** |
 | `pcre2` | `apk` | 0 | 4 | 3 | 0 | 0 | 0 | **7** |
+| `libxslt` | `apk` | 0 | 3 | 1 | 0 | 0 | 0 | **4** |
 | `c-ares` | `apk` | 0 | 2 | 2 | 0 | 0 | 0 | **4** |
-| `zlib` | `apk` | 1 | 1 | 1 | 0 | 0 | 0 | **3** |
 
 ## How far to trust these numbers
 
