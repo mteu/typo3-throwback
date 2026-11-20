@@ -21,8 +21,18 @@
 # worker for its directory. Nothing at the root, under /docs/ or under /wasm/
 # does.
 #
-# A change to the docs alone rebuilds PHP too, because the deployment needs
-# every part. That costs the WebAssembly build's time, once per change.
+# The deployment needs every part, so every run assembles the whole site, but
+# it spends time only on what changed:
+#
+#   * Each PHP build is cached under a hash of its own inputs: its directory in
+#     wasm/, wasm/native/, its vendored sources and the pinned emsdk. A change
+#     to PHP 4 rebuilds PHP 4 and restores PHP 5, and the other way round. A
+#     branch restores what the default branch cached; the default branch
+#     builds once after a merge that changed a build's inputs.
+#   * check.sh runs when a file it reads changed, when a build was not
+#     restored from the cache, or on a manual run. A change to site/ alone
+#     builds the docs and lays out the site from the cached builds, without
+#     the checks: nothing they test has changed since they last passed.
 #
 # Publishing rules:
 #
@@ -58,6 +68,7 @@ on:
       - '3.3/provision.php'
       - '3.3/LICENCES.md'
       - '3.8/provision.php'
+      - '3.8/php-legacy.ini'
       - '3.8/LICENCES.md'
       - '4.0/provision.php'
       - '4.0/LICENCES.md'
@@ -87,7 +98,55 @@ env:
   PINNED_EMSDK_COMMIT: 1693ce7359fc9694f198694f902a2cc061239b86
 
 jobs:
+  # Whether a file check.sh reads changed: the trigger's list without site/.
+  # The PHP builds need no such gate, because their cache keys are hashes of
+  # their inputs.
+  changes:
+    runs-on: ubuntu-24.04
+    outputs:
+      checks: ${{ steps.filter.outputs.checks == 'true' || github.event_name == 'workflow_dispatch' }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 2
+
+      - uses: dorny/paths-filter@v4
+        id: filter
+        with:
+          # As in images.yml: compare with the commit before the push, not with
+          # the default branch.
+          base: ${{ github.ref_name }}
+          filters: |
+            checks:
+              - 'wasm/**'
+              - 'vendor-src/php-4.4.9/**'
+              - 'vendor-src/php-5.6.40/**'
+              - 'vendor-src/libxml2-2.9.14/**'
+              - 'vendor-src/openssl-1.0.2u/**'
+              - 'vendor-src/typo3-3.3.0/**'
+              - 'vendor-src/typo3-3.8.1/**'
+              - 'vendor-src/typo3-4.0.13/**'
+              - 'vendor-src/typo3-4.5.40/**'
+              - 'vendor-src/typo3-6.2.31/**'
+              - '3.3/provision.php'
+              - '3.3/LICENCES.md'
+              - '3.8/provision.php'
+              - '3.8/php-legacy.ini'
+              - '3.8/LICENCES.md'
+              - '4.0/provision.php'
+              - '4.0/LICENCES.md'
+              - '4.5/provision.php'
+              - '4.5/php-legacy.ini'
+              - '4.5/LICENCES.md'
+              - '6.2/provision.php'
+              - '6.2/php-legacy.ini'
+              - '6.2/LICENCES.md'
+              - 'php4-base/php-legacy.ini'
+              - 'LICENSE'
+              - '.github/workflows/pages.yml'
+
   wasm:
+    needs: changes
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
@@ -97,41 +156,106 @@ jobs:
         with:
           node-version: 22
 
+      # Only out/ is kept: check.sh and assemble.sh read nothing else of a
+      # build's work dir.
+      - name: Restore PHP 4.4.9
+        id: php4
+        uses: actions/cache/restore@v5
+        with:
+          path: ${{ runner.temp }}/wasm/php-4.4.9/out
+          key: wasm-php-4.4.9-${{ runner.os }}-${{ env.PINNED_EMSDK_COMMIT }}-${{ hashFiles('wasm/php-4.4.9/**', 'wasm/native/**', 'vendor-src/php-4.4.9/**') }}
+
+      - name: Restore PHP 5.6.40
+        id: php5
+        uses: actions/cache/restore@v5
+        with:
+          path: ${{ runner.temp }}/wasm/php-5.6.40/out
+          key: wasm-php-5.6.40-${{ runner.os }}-${{ env.PINNED_EMSDK_COMMIT }}-${{ hashFiles('wasm/php-5.6.40/**', 'wasm/native/**', 'vendor-src/php-5.6.40/**', 'vendor-src/libxml2-2.9.14/**', 'vendor-src/openssl-1.0.2u/**') }}
+
+      # A fresh build is checked even when no file check.sh reads changed, so
+      # that nothing reaches the site that check.sh has not seen.
+      - name: Decide what to build and check
+        id: plan
+        env:
+          PHP4_HIT: ${{ steps.php4.outputs.cache-hit }}
+          PHP5_HIT: ${{ steps.php5.outputs.cache-hit }}
+          CHECKS: ${{ needs.changes.outputs.checks }}
+        run: |
+          build=false
+          if [ "$PHP4_HIT" != true ] || [ "$PHP5_HIT" != true ]; then build=true; fi
+          check=$CHECKS
+          if [ "$build" = true ]; then check=true; fi
+          echo "build=$build" >> "$GITHUB_OUTPUT"
+          echo "check=$check" >> "$GITHUB_OUTPUT"
+
       - name: Install flex and bison
+        if: steps.plan.outputs.build == 'true'
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends flex bison
 
+      # check.sh needs it too: it sources emsdk_env.sh.
       - name: Install emsdk ${{ env.PINNED_EMSDK_VERSION }}
+        if: steps.plan.outputs.check == 'true'
         run: |
           git clone --depth 1 --branch "$PINNED_EMSDK_VERSION" https://github.com/emscripten-core/emsdk.git "$RUNNER_TEMP/emsdk"
           test "$(git -C "$RUNNER_TEMP/emsdk" rev-parse HEAD)" = "$PINNED_EMSDK_COMMIT"
           "$RUNNER_TEMP/emsdk/emsdk" install "$PINNED_EMSDK_VERSION"
           "$RUNNER_TEMP/emsdk/emsdk" activate "$PINNED_EMSDK_VERSION"
 
-      - name: Install sql.js and Playwright's Chromium
+      - name: Install sql.js
         working-directory: wasm
-        run: |
-          npm ci --no-audit --no-fund
-          npx playwright install --with-deps chromium
+        run: npm ci --no-audit --no-fund
+
+      - name: Install Playwright's Chromium
+        if: steps.plan.outputs.check == 'true'
+        working-directory: wasm
+        run: npx playwright install --with-deps chromium
 
       - name: Build PHP 4.4.9 to WebAssembly
+        if: steps.php4.outputs.cache-hit != 'true'
         run: |
           source "$RUNNER_TEMP/emsdk/emsdk_env.sh"
           wasm/php-4.4.9/build.sh . "$RUNNER_TEMP/wasm/php-4.4.9"
 
+      - name: Cache PHP 4.4.9
+        if: steps.php4.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: ${{ runner.temp }}/wasm/php-4.4.9/out
+          key: ${{ steps.php4.outputs.cache-primary-key }}
+
       # The site runs 4.5.40 and 6.2.31 on it. check.sh also probes its CLI
       # and request loop, and lints both with it.
       - name: Build PHP 5.6.40 to WebAssembly
+        if: steps.php5.outputs.cache-hit != 'true'
         run: |
           source "$RUNNER_TEMP/emsdk/emsdk_env.sh"
           wasm/php-5.6.40/build.sh . "$RUNNER_TEMP/wasm/php-5.6.40"
 
+      - name: Cache PHP 5.6.40
+        if: steps.php5.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: ${{ runner.temp }}/wasm/php-5.6.40/out
+          key: ${{ steps.php5.outputs.cache-primary-key }}
+
       # Ends by assembling the site and driving it in Chromium.
       - name: Run every check, the site in a browser included
+        if: steps.plan.outputs.check == 'true'
         run: |
           source "$RUNNER_TEMP/emsdk/emsdk_env.sh"
           wasm/check.sh . "$RUNNER_TEMP/wasm"
+
+      # What check.sh ends with, for a run that has nothing new to check.
+      - name: Lay out the browser part of the site
+        if: steps.plan.outputs.check != 'true'
+        run: |
+          releases=()
+          for file in wasm/releases/*.js; do
+            releases+=("$(basename "$file" .js)")
+          done
+          wasm/site/assemble.sh . "$RUNNER_TEMP/wasm" "${releases[@]}"
 
       - uses: actions/upload-artifact@v7
         with:
