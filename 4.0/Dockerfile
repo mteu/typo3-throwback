@@ -12,7 +12,7 @@
 # selects the source, never the content.
 ARG BASE_REGISTRY=docker.io/library
 
-FROM ${BASE_REGISTRY}/php@sha256:0a40fd273961b99d8afe69a61a68c73c04bc0caa9de384d3b2dd9e7986eec86d
+FROM ${BASE_REGISTRY}/php@sha256:fd352334c4c5b37b68ace4129a423bb598ea77acee3c1c76374a2411ddf51073
 
 # ---------------------------------------------------------------------------
 # Debian stretch packages, each pinned by SHA-256
