@@ -11,6 +11,8 @@
 #   /3.8/    TYPO3 3.8.1 in the browser, the same way
 #   /4.0/    TYPO3 4.0.13 in the browser, the same way
 #   /4.5/    TYPO3 4.5.40 in the browser, the same way, on PHP 5.6.40
+#   /6.2/    TYPO3 6.2.31 in the browser, the same way, on PHP 5.6.40, set up
+#            in the tab by its own installer on the first visit
 #
 # wasm/check.sh checks all of the browser part, headless Chromium included,
 # before anything is published, and wasm/site/assemble.sh lays it out.
@@ -52,6 +54,7 @@ on:
       - 'vendor-src/typo3-3.8.1/**'
       - 'vendor-src/typo3-4.0.13/**'
       - 'vendor-src/typo3-4.5.40/**'
+      - 'vendor-src/typo3-6.2.31/**'
       - '3.3/provision.php'
       - '3.3/LICENCES.md'
       - '3.8/provision.php'
@@ -61,6 +64,9 @@ on:
       - '4.5/provision.php'
       - '4.5/php-legacy.ini'
       - '4.5/LICENCES.md'
+      - '6.2/provision.php'
+      - '6.2/php-legacy.ini'
+      - '6.2/LICENCES.md'
       - 'php4-base/php-legacy.ini'
       - 'LICENSE'
       - 'site/**'
@@ -114,8 +120,8 @@ jobs:
           source "$RUNNER_TEMP/emsdk/emsdk_env.sh"
           wasm/php-4.4.9/build.sh . "$RUNNER_TEMP/wasm/php-4.4.9"
 
-      # The site runs 4.5.40 on it. check.sh also probes its CLI and request
-      # loop, and lints 4.5.40 with it.
+      # The site runs 4.5.40 and 6.2.31 on it. check.sh also probes its CLI
+      # and request loop, and lints both with it.
       - name: Build PHP 5.6.40 to WebAssembly
         run: |
           source "$RUNNER_TEMP/emsdk/emsdk_env.sh"
@@ -195,7 +201,7 @@ jobs:
           fi
           test -f "$pages/index.html"
           test -f "$pages/docs/index.html"
-          for release in 3.3 3.8 4.0 4.5; do
+          for release in 3.3 3.8 4.0 4.5 6.2; do
             test -f "$pages/$release/index.html"
             test -f "$pages/$release/sw.js"
           done

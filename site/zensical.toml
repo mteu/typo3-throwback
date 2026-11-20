@@ -28,6 +28,7 @@ nav = [
     { "TYPO3 3.8.1" = "browser/3.8.md" },
     { "TYPO3 4.0.13" = "browser/4.0.md" },
     { "TYPO3 4.5.40" = "browser/4.5.md" },
+    { "TYPO3 6.2.31" = "browser/6.2.md" },
   ] },
   { "With Docker" = [
     "docker/index.md",

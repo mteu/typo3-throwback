@@ -92,18 +92,24 @@ The site published to GitHub Pages
 
   .github/workflows/pages.yml publishes sql.js, PHP 4.4.9 and PHP 5.6.40
   compiled to WebAssembly, the second with libxml2 and OpenSSL, and the TYPO3
-  3.3.0, 3.8.1, 4.0.13 and 4.5.40 archives. The 3.3.0 and 3.8.1 archives each
-  bundle a phpMyAdmin, under the GPL. The 4.0.13 archive bundles ADOdb, under
-  the BSD licence or the LGPL 2.1, and htmlArea, under a BSD-style licence. The
-  4.5.40 archive bundles both as well. Among its other libraries are ExtJS,
-  under the GPL; Prototype, script.aculo.us and SWFUpload, under the MIT
-  licence; SwiftMailer, under the LGPL 3.0; CodeMirror, under zlib- and
-  BSD-style licences; and PHP OpenID, under the Apache 2.0 licence.
-  4.5/LICENCES.md lists every licence file in it. The site carries LICENSES.txt
-  with the notices the PHP License and the Zend Engine License require, the
-  credit lines the libjpeg and FreeType licences require, the acknowledgements
-  the OpenSSL and SSLeay licences require, the licence files in each TYPO3
-  archive, and the full texts of every licence above that applies to it.
+  3.3.0, 3.8.1, 4.0.13, 4.5.40 and 6.2.31 archives. The 3.3.0 and 3.8.1
+  archives each bundle a phpMyAdmin, under the GPL. The 4.0.13 archive
+  bundles ADOdb, under the BSD licence or the LGPL 2.1, and htmlArea, under a
+  BSD-style licence. The 4.5.40 archive bundles both as well. Among its other
+  libraries are ExtJS, under the GPL; Prototype, script.aculo.us and
+  SWFUpload, under the MIT licence; SwiftMailer, under the LGPL 3.0;
+  CodeMirror, under zlib- and BSD-style licences; and PHP OpenID, under the
+  Apache 2.0 licence. 4.5/LICENCES.md lists every licence file in it. The
+  6.2.31 archive bundles most of these too, and adds jsbn, which its login
+  form encrypts passwords with, under the MIT licence; Modernizr, under MIT-
+  and BSD-style licences; Flowplayer, under the GPL 3.0; video.js, under the
+  LGPL 3.0; and the PSR log interfaces and Doctrine's instantiator, under the
+  MIT licence. 6.2/LICENCES.md lists every licence file in it. The site carries
+  LICENSES.txt with the notices the PHP License and the Zend Engine License
+  require, the credit lines the libjpeg and FreeType licences require, the
+  acknowledgements the OpenSSL and SSLeay licences require, the licence files
+  in each TYPO3 archive, and the full texts of every licence above that
+  applies to it.
 
 The TYPO3 mark in README.md
 

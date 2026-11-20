@@ -57,7 +57,7 @@ publish() {
     map+="\"$logical\":\"$published\","
 }
 
-for name in php-runtime.js mysql-sqlite.js tar.js typo3-site.js; do
+for name in php-runtime.js mysql-sqlite.js tar.js typo3-site.js step-installer.js; do
     publish "runtime/$name" "$wasm/runtime/$name"
 done
 for name in sql-wasm.js sql-wasm.wasm; do

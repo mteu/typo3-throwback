@@ -95,8 +95,19 @@ figure.shown { margin: 0; }
 a.pill { text-decoration: none; }
 a.pill:hover, a.pill:focus-visible { background: var(--orange); color: #17171a; }
 
-/* the doors */
-.doors { display: grid; grid-template-columns: 1fr auto; gap: 40px; align-items: center; }
+/* the doors: one tile per release, as wide as the others */
+.tiles { list-style: none; margin: 32px 0 0; padding: 0; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 16px; }
+.tile { display: grid; grid-template-columns: auto 1fr; align-items: center; column-gap: 12px; row-gap: 16px; height: 100%;
+  padding: 20px 20px 18px; background: var(--plate); border: 1px solid var(--line); border-radius: 14px;
+  text-decoration: none; color: var(--ink); transition: border-color .15s, box-shadow .15s, transform .15s; }
+.tile img { width: 44px; height: 44px; background: #fff; padding: 3px; outline: 1px solid var(--line); }
+.tile b { font-size: 22px; letter-spacing: -.01em; line-height: 1.1; }
+.tile .meta { grid-column: 1 / -1; align-self: end; display: flex; justify-content: space-between; font: 12px var(--mono); color: var(--muted); }
+.tile .go { color: var(--orange-ink); }
+.tile:hover, .tile:focus-visible { border-color: var(--orange); box-shadow: var(--shadow); transform: translateY(-2px); }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .tile { background: var(--wall-2); } }
+:root[data-theme="dark"] .tile { background: var(--wall-2); }
+@media (prefers-reduced-motion: reduce) { .tile { transition: none; } .tile:hover, .tile:focus-visible { transform: none; } }
 pre { background: var(--wall-2); border: 1px solid var(--line); padding: 16px 18px; overflow-x: auto; font: 14px/1.6 var(--mono); margin: 0 0 20px; }
 .warn { border-left: 3px solid var(--orange); padding: 4px 0 4px 16px; color: var(--muted); max-width: 44em; }
 
@@ -105,7 +116,11 @@ footer p { max-width: 52em; margin: 0 0 10px; }
 
 @media (max-width: 820px) {
   .hero { grid-template-columns: 1fr; gap: 40px; padding: 24px 0 64px; }
-  .doors { grid-template-columns: 1fr; }
+  .tiles { grid-template-columns: 1fr; gap: 10px; }
+  .tile { grid-template-columns: auto auto 1fr; padding: 12px 16px; }
+  .tile img { width: 36px; height: 36px; }
+  .tile b { font-size: 19px; }
+  .tile .meta { grid-column: auto; justify-self: end; align-self: center; gap: 16px; }
   .top nav a:not(:last-child) { display: none; }
 }
 @media (prefers-reduced-motion: reduce) {

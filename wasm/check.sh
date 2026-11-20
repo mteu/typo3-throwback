@@ -175,6 +175,11 @@ for release in "${releases[@]}"; do
             echo "== 4.5.40's random bytes from openssl, and charset conversion with no iconv or mbstring"
             "${php[@]}" -d error_reporting=22519 "$here/probe/core-functions-5.php" "$tree"
             ;;
+        6.2.31)
+            # None: 6.2.31 runs on PHP 5.6.40, as its Docker stack does.
+            test "$total" -eq 3289
+            test -z "$failing"
+            ;;
         *)
             echo "no lint expectations for $release" >&2
             exit 1
@@ -182,7 +187,12 @@ for release in "${releases[@]}"; do
     esac
 
     echo "== TypoScript parser from $release core"
-    "${php[@]}" -d error_reporting=2039 "$here/probe/typoscript.php" "$tree"
+    if [ -d "$tree/t3lib" ]; then
+        "${php[@]}" -d error_reporting=2039 "$here/probe/typoscript.php" "$tree"
+    else
+        # A namespaced core, from 6.2 on: the probe loads it by namespace.
+        "${php[@]}" -d error_reporting=22519 "$here/probe/typoscript-6.php" "$tree"
+    fi
 
     echo "== TYPO3 $release through the request loop, without a database"
     node "$here/probe/bootstrap.cjs" "$work" "$release"

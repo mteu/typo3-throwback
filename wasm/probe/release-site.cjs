@@ -14,6 +14,7 @@ const PhpRuntime = require('../runtime/php-runtime.js');
 const MysqlOnSqlite = require('../runtime/mysql-sqlite.js');
 const readTar = require('../runtime/tar.js');
 const Typo3Site = require('../runtime/typo3-site.js');
+const StepInstaller = require('../runtime/step-installer.js');
 
 const repoRoot = path.resolve(__dirname, '..', '..');
 const initSqlJs = require(path.join(__dirname, '..', 'node_modules', 'sql.js'));
@@ -38,6 +39,7 @@ async function bootRelease(name, workRoot, options = {}) {
     tarball: zlib.gunzipSync(read(release.archive)),
     provisionScript: release.provisionScript ? read(release.provisionScript) : null,
     legacyIni: read(release.ini),
+    StepInstaller,
     urlPrefix: '',
     ...options,
   });
