@@ -85,12 +85,56 @@ function askShells(clients, request) {
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
-function page(status, title, text) {
-  return new Response(`<!doctype html><title>${title}</title><p>${text}</p>`, {
+// The shell's colors, so these pages read as part of the museum.
+const PAGE_STYLE = `
+  :root { --bg: #f4f1ea; --bar: #ffffff; --text: #23211d; --muted: #6b665c; --line: #ddd7ca; --accent: #c8501e; --on-accent: #ffffff; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #1b1a18; --bar: #252320; --text: #ece8df; --muted: #a39d90; --line: #3a3732; --accent: #f07a45; --on-accent: #1b1a18; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 32px 16px; background: var(--bg); color: var(--text); font: 15px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { width: min(560px, 100%); padding: 28px; background: var(--bar); border: 1px solid var(--line); border-radius: 10px; }
+  .eyebrow { margin: 0 0 6px; color: var(--muted); font-size: 12px; }
+  h1 { margin: 0 0 10px; font-size: 22px; line-height: 1.25; }
+  h2 { margin: 0 0 6px; font-size: 15px; }
+  p { margin: 0 0 12px; }
+  a { color: var(--accent); }
+  .action { display: inline-block; margin: 4px 0 18px; padding: 9px 16px; border-radius: 6px; background: var(--accent); color: var(--on-accent); font-weight: 600; text-decoration: none; }
+  .action:hover, .action:focus-visible { filter: brightness(1.08); }
+  ul.options { margin: 0 0 4px; padding-left: 20px; }
+  ul.options li { margin-bottom: 8px; }
+  details { margin-top: 18px; border-top: 1px solid var(--line); padding-top: 14px; color: var(--muted); font-size: 14px; }
+  details[open] summary { margin-bottom: 12px; }
+  summary { color: var(--text); font-weight: 600; cursor: pointer; }
+  details h2 { color: var(--text); font-size: 14px; margin-top: 14px; }
+  kbd { padding: 0 5px; border: 1px solid var(--line); border-radius: 4px; font: inherit; font-size: 13px; white-space: nowrap; }
+`;
+
+function page(status, title, body) {
+  return new Response(`<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${title}</title><style>${PAGE_STYLE}</style><main><p class="eyebrow">TYPO3 Throwback · v${scopePath.split('/').filter(Boolean).pop()}</p>${body}</main></html>`, {
     status,
     headers: { 'Content-Type': 'text/html; charset=utf-8' },
   });
 }
+
+const OUTSIDE_LINK_PAGE = `
+<h1>Open TYPO3 from its start page</h1>
+<p>You reached a page inside this TYPO3 site directly, through a bookmark, a typed address, or a link from somewhere else. This site only answers its own pages, so it stopped here.</p>
+<a class="action" href="${scopePath}">Go to the start page</a>
+<ul class="options">
+  <li>Looking for the backend? On the start page, click <kbd>Backend ↗</kbd>. It opens in a tab of its own. Keep the start page open next to it.</li>
+  <li>Did you come from the start page? Then your browser did not say where the click came from. A privacy setting or an extension that strips the referrer does that. Allow referrers for this site, or try a window without extensions.</li>
+</ul>
+<details>
+  <summary>Why does this happen?</summary>
+  <h2>PHP runs in the start page</h2>
+  <p>There is no server behind this site. PHP runs inside your browser, in the start page's tab. Every page of TYPO3, the backend included, is answered by that tab. A tab without the start page has nothing to answer it.</p>
+  <h2>The backend needs a whole window</h2>
+  <p>The start page shows TYPO3's frontend in a frame. The backend cannot live there. TYPO3 built it for the whole browser window: up to 4.0 it is a set of frames, and every release reaches for the top window to find its own parts. Inside the frame, the top window is the start page, so the backend breaks. That is why it opens in a separate tab, which still asks the start page for every request.</p>
+  <h2>Why direct links stop here</h2>
+  <p>This is old TYPO3 code, with the security holes of its time. If any link could reach it, another website could make your browser send requests in your name, for example a forged form to the backend. So the site only answers requests from its own pages.</p>
+</details>
+`;
 
 // Another site could link to site/ or frame it, so that PHP 4 answers a
 // request the visitor never meant to make: a reflected XSS in 2002 code, or a
@@ -109,7 +153,7 @@ function fromThisSite(request) {
 
 async function relay(request, url) {
   if (!fromThisSite(request)) {
-    return page(403, 'Open it from the start page', `This site only answers its own pages. Open its <a href="${scopePath}">start page</a> instead. If you came from there, a browser setting or an extension that strips the referrer is in the way.`);
+    return page(403, 'Open TYPO3 from its start page', OUTSIDE_LINK_PAGE);
   }
   const body = request.method === 'GET' || request.method === 'HEAD' ? null : new Uint8Array(await request.arrayBuffer());
   const headers = {};
@@ -126,19 +170,19 @@ async function relay(request, url) {
   for (;;) {
     const clients = await shells();
     if (clients.length === 0) {
-      return page(503, 'Not running', `This site runs inside its <a href="${scopePath}">start page</a>. Open that first.`);
+      return page(503, 'Not running', `<h1>Not running</h1><p>This site runs inside its <a href="${scopePath}">start page</a>. Open that first.</p>`);
     }
     response = await askShells(clients, message);
     if (response) {
       break;
     }
     if (Date.now() > deadline) {
-      return page(503, 'Not running', `No tab runs PHP yet. Reload this site's <a href="${scopePath}">start page</a>.`);
+      return page(503, 'Not running', `<h1>Not running</h1><p>No tab runs PHP yet. Reload this site's <a href="${scopePath}">start page</a>.</p>`);
     }
     await sleep(LEADER_POLL_MS);
   }
   if (response.error) {
-    return page(500, 'PHP worker error', response.error.replace(/</g, '&lt;'));
+    return page(500, 'PHP worker error', `<h1>PHP worker error</h1><p>${response.error.replace(/</g, '&lt;')}</p>`);
   }
   const status = response.status >= 200 && response.status <= 599 ? response.status : 500;
   const withoutBody = [204, 205, 304].includes(status) || request.method === 'HEAD';

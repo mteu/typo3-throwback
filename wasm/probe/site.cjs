@@ -249,7 +249,7 @@ async function check(label, test) {
         await other.goto('http://elsewhere.test/');
         const [posted] = await Promise.all([other.waitForEvent('load'), other.click('button')]);
         assert.ok(posted);
-        assert.match(await other.content(), /only answers its own pages/);
+        assert.match(await other.content(), /Open TYPO3 from its start page/);
         const typed = await other.goto(`${base}/site/`);
         assert.strictEqual(typed.status(), 403);
         const own = await other.goto(`${base}/index.html`);
