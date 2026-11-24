@@ -77,12 +77,16 @@ def main():
         print('bodytext field blank, as the control predicts')
         return
     if mode == 'frontend-blank':
-        # parseFunc_RTE's htmlspecialchars() leaves nothing, and encapsLines fills
-        # an empty line with a non-breaking space (innerStdWrap_all.ifBlank).
-        value = extract(page, PARAGRAPH, 'bodytext paragraph')
-        if value not in (b'', b'&nbsp;'):
-            sys.exit('::error::the bodytext paragraph was not blank: %r' % value)
-        print('bodytext paragraph blank, as the control predicts')
+        # parseFunc_RTE's htmlspecialchars() leaves nothing, and encaps_lineSplit()
+        # returns an empty value as it is, unwrapped (tslib/class.tslib_content.php:
+        # 4396), so the page has no bodytext paragraph at all. The heading, which is
+        # ASCII, shows the page itself still rendered.
+        if not re.search(rb'<h1[^>]*>TYPO3 4\.0\.13</h1>', page):
+            sys.exit('::error::the frontend did not render the content element')
+        match = re.search(PARAGRAPH, page, re.S)
+        if match and match.group(1) not in (b'', b'&nbsp;'):
+            sys.exit('::error::the bodytext paragraph was not blank: %r' % match.group(1))
+        print('bodytext blank, as the control predicts')
         return
 
     text = os.fsencode(sys.argv[3]).decode('utf-8')
