@@ -135,6 +135,6 @@ is a registered trademark of the TYPO3 Association.
 The mark at the top is the logo as it shipped in the 3.3.0 release archive. It is
 not covered by the MIT license.
 
-## Disclaimer
+## Disclaimer / Slop Alert
 
-Large language models were used in the making of this project.
+Obviously, large language models were heavily used in the making of this project.
