@@ -11,7 +11,7 @@ All optional. Set them in your shell or in a `.env` file next to the compose fil
 
 | Variable | Default | Effect |
 | --- | --- | --- |
-| `TYPO3_PROVISION` | `auto` | `auto` seeds an admin, a root page and a TypoScript template, so the site renders immediately. `wizard` leaves the database empty so you can walk the period-authentic 1-2-3 install wizard at `/typo3/install/index.php?mode=123&step=1`. 6.2 ignores it: its own step installer always runs on first boot, which takes most of a minute. |
+| `TYPO3_PROVISION` | `auto` | `auto` seeds an admin, a root page, a text element on it from 4.0 on, and a TypoScript template, so the site renders immediately. `wizard` leaves the database empty so you can walk the period-authentic 1-2-3 install wizard at `/typo3/install/index.php?mode=123&step=1`. 6.2 ignores it: its own step installer always runs on first boot, which takes most of a minute. |
 | `TYPO3_ADMIN_PASSWORD` | `password` | Backend password for `admin`. Only read on the first boot of a fresh database. |
 | `THROWBACK_PORT_33` / `_38` / `_40` / `_45` / `_62` | `8033` / `8038` / `8040` / `8045` / `8062` | Loopback port of each stack. |
 | `TYPO3_BEHIND_TLS` | `0` | 4.0, 4.5 and 6.2. `1` tells TYPO3 it sits behind a TLS-terminating proxy, so its absolute redirects say `https://`. Leave it off on plain loopback, where `https://` leads nowhere. |

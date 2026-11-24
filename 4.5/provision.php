@@ -14,10 +14,11 @@
  *                        install wizard at typo3/install/index.php?mode=123.
  *
  * What is new against 3.8 is the character set. 3.8 asserted latin1; this asserts
- * UTF-8, at the server, the database, a column, and a stored value read back. The
+ * UTF-8, at the server, the database and the columns the tests write to. The
  * reason is that 4.5 connects with
  * SET NAMES utf8 and names no charset on its tables, so a latin1 server would
- * store every character outside latin1 as '?' without an error anywhere.
+ * store every character outside latin1 as '?' without an error anywhere. What a
+ * stored value looks like is for the tests to prove, through the record editor.
  */
 
 function out($msg) {
@@ -46,25 +47,18 @@ $adminPass = env('TYPO3_ADMIN_PASSWORD', 'password');
 $mode    = env('TYPO3_PROVISION', 'auto');
 $docRoot = env('TYPO3_DOCROOT', '/var/www/html');
 
-/**
- * Stored as the root page's title and rendered back by the frontend, so the smoke
- * test can check it byte for byte.
- *
- * Every word earns its place. The ø and ö are inside latin1, so on their own they
- * would survive a latin1 server and prove nothing — that is the flaw in a round
- * trip over umlauts alone. The ő (Hungarian, U+0151) and the Japanese are outside
- * latin1 and outside cp1252, so a latin1 column turns them into '?'.
- */
-$charsetProbe = 'Skaarhøj · Gödöllő · 日本語';
+$siteName = env('TYPO3_SITENAME', 'TYPO3 4.5.40');
+$welcomeText = 'A text element, stored in tt_content and rendered by css_styled_content.';
 
 /**
  * The extensions a fresh 4.5.40 loads, in the order t3lib_extMgm loads them:
  * REQUIRED_EXTENSIONS (t3lib/config_default.php:26) then the default extList
  * (:183), per t3lib_extMgm::getEnabledExtensionList() (t3lib/class.t3lib_extmgm.php:1623).
- * The generated localconf.php overrides extList only to append t3skin (see
- * entrypoint.sh), which is why it is the last entry below.
+ * The generated localconf.php overrides extList only to append t3skin and
+ * css_styled_content (see entrypoint.sh), which is why they are the last entries
+ * below.
  *
- * Only five of the twenty-three carry an ext_tables.sql — cms, em, tsconfig_help,
+ * Only five of the twenty-four carry an ext_tables.sql — cms, em, tsconfig_help,
  * impexp and felogin — and only em and tsconfig_help carry static data. The rest
  * are listed anyway so this array can be compared with the source line for line.
  */
@@ -72,7 +66,7 @@ $loadedExtensions = array(
     'cms', 'lang', 'sv', 'em', 'recordlist',
     'filelist', 'version', 'tsconfig_help', 'context_help', 'extra_page_cm_options',
     'impexp', 'belog', 'about', 'cshmanual', 'aboutmodules', 'setup', 'opendocs',
-    'install', 't3editor', 'felogin', 'feedit', 'recycler', 't3skin',
+    'install', 't3editor', 'felogin', 'feedit', 'recycler', 't3skin', 'css_styled_content',
 );
 
 /**
@@ -366,48 +360,47 @@ mysql_query($sql, $link) or fail('creating admin user: ' . mysql_error($link));
 out('created backend admin "' . $adminUser . '"');
 
 // --- seed a rendering frontend --------------------------------------------
+// A root page with one text element on it, rendered by css_styled_content, as a
+// site of the time was set up. The tests write their own text into both records
+// through the record editor, and read it back from the frontend.
 $sql = "INSERT INTO pages (pid, tstamp, crdate, sorting, title, doktype, hidden, deleted, perms_userid, perms_user, perms_group, perms_everybody)"
-     . " VALUES (0, " . $now . ", " . $now . ", 256, '" . mysql_real_escape_string($charsetProbe, $link) . "', 1, 0, 0, 1, 31, 31, 31)";
+     . " VALUES (0, " . $now . ", " . $now . ", 256, '" . mysql_real_escape_string($siteName, $link) . "', 1, 0, 0, 1, 31, 31, 31)";
 mysql_query($sql, $link) or fail('creating root page: ' . mysql_error($link));
 $rootPageUid = mysql_insert_id($link);
 out('created root page (uid ' . $rootPageUid . ')');
 
-// The UTF-8 round trip, before anything else depends on it. A column that
-// is not utf8 is the cause; a stored value that differs is the symptom, and the one
-// a visitor would see. Both are checked so a failure says which.
-rejectUnlessUtf8('pages.title charset', readSingleValue($link,
-    "SELECT CHARACTER_SET_NAME FROM information_schema.COLUMNS"
-    . " WHERE TABLE_SCHEMA = '" . mysql_real_escape_string($dbName, $link) . "'"
-    . " AND TABLE_NAME = 'pages' AND COLUMN_NAME = 'title'"));
+$sql = "INSERT INTO tt_content (pid, tstamp, crdate, sorting, CType, header, bodytext, colPos, hidden, deleted)"
+     . " VALUES (" . $rootPageUid . ", " . $now . ", " . $now . ", 256, 'text', '"
+     . mysql_real_escape_string($siteName, $link) . "', '"
+     . mysql_real_escape_string($welcomeText, $link) . "', 0, 0, 0)";
+mysql_query($sql, $link) or fail('creating content element: ' . mysql_error($link));
+out('created content element (uid ' . mysql_insert_id($link) . ')');
 
-$storedTitle = readSingleValue($link, 'SELECT title FROM pages WHERE uid = ' . (int) $rootPageUid);
-if ($storedTitle !== $charsetProbe) {
-    fail('the root page title did not survive the database: wrote "' . $charsetProbe
-        . '", read back "' . $storedTitle . '"');
+// The columns the record editor writes the tests' text into. One that is not
+// utf8 would store every character outside latin1 as '?'.
+foreach (array('pages.title', 'tt_content.header', 'tt_content.bodytext') as $column) {
+    $parts = explode('.', $column);
+    rejectUnlessUtf8($column . ' charset', readSingleValue($link,
+        "SELECT CHARACTER_SET_NAME FROM information_schema.COLUMNS"
+        . " WHERE TABLE_SCHEMA = '" . mysql_real_escape_string($dbName, $link) . "'"
+        . " AND TABLE_NAME = '" . $parts[0] . "' AND COLUMN_NAME = '" . $parts[1] . "'"));
 }
-out('UTF-8 round trip through pages.title: ok');
 
-// Plain, as in 3.8, and rendered through the real TypoScript pipeline. page.40 is
-// new: it reads the page title back out of the database, so the frontend's HTML
-// carries the round trip and the smoke test can see it.
+// css_styled_content's own template, included as the template record's "Include
+// static (from extensions)" field stores it, renders the page's content.
 $typoScript = 'page = PAGE' . chr(10)
     . 'page.typeNum = 0' . chr(10)
-    . 'page.10 = TEXT' . chr(10)
-    . 'page.10.value = TYPO3 4.5.40' . chr(10)
-    . 'page.10.wrap = <h1>|</h1>' . chr(10)
+    . 'page.10 < styles.content.get' . chr(10)
     . 'page.20 = TEXT' . chr(10)
     . 'page.20.value = Rendered by TypoScript on PHP ' . phpversion() . chr(10)
     . 'page.20.wrap = <p>|</p>' . chr(10)
     . 'page.30 = TEXT' . chr(10)
     . 'page.30.data = date:U' . chr(10)
     . 'page.30.strftime = %Y-%m-%d %H:%M:%S' . chr(10)
-    . 'page.30.wrap = <p>Page generated&nbsp;|</p>' . chr(10)
-    . 'page.40 = TEXT' . chr(10)
-    . 'page.40.data = page:title' . chr(10)
-    . 'page.40.wrap = <p id="charset-probe">|</p>' . chr(10);
+    . 'page.30.wrap = <p>Page generated&nbsp;|</p>' . chr(10);
 
-$sql = "INSERT INTO sys_template (pid, tstamp, crdate, sorting, title, root, clear, config, deleted, hidden)"
-     . " VALUES (" . $rootPageUid . ", " . $now . ", " . $now . ", 256, 'Main template', 1, 3, '"
+$sql = "INSERT INTO sys_template (pid, tstamp, crdate, sorting, title, root, clear, include_static_file, config, deleted, hidden)"
+     . " VALUES (" . $rootPageUid . ", " . $now . ", " . $now . ", 256, 'Main template', 1, 3, 'EXT:css_styled_content/static/', '"
      . mysql_real_escape_string($typoScript, $link) . "', 0, 0)";
 mysql_query($sql, $link) or fail('creating root template: ' . mysql_error($link));
 out('created root TypoScript template');

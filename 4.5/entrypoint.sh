@@ -74,11 +74,13 @@ if [ ! -f "$LOCALCONF" ]; then
     # leaves the backend skin out: without it no skin stylesheet is registered, and
     # the backend renders as bare HTML with an unbuilt module menu. 4.5's own
     # update wizard says as much (sysext/install/updates/class.tx_coreupdates_t3skin.php:
-    # "Without t3skin the backend may be unusable"). t3skin has no ext_tables.sql, so
-    # provision.php's schema is unchanged by it.
+    # "Without t3skin the backend may be unusable"). css_styled_content renders the
+    # seeded page's content element: a fresh 4.5 leaves it to the Extension
+    # Manager, and a site of the time installed it on day one. Neither has an
+    # ext_tables.sql, so provision.php's schema is unchanged by them.
     COMMON=$(cat <<EOF
 \$TYPO3_CONF_VARS['SYS']['compat_version'] = '4.5';
-\$TYPO3_CONF_VARS['EXT']['extList'] = 'filelist,version,tsconfig_help,context_help,extra_page_cm_options,impexp,belog,about,cshmanual,aboutmodules,setup,opendocs,install,t3editor,felogin,feedit,recycler,t3skin';
+\$TYPO3_CONF_VARS['EXT']['extList'] = 'filelist,version,tsconfig_help,context_help,extra_page_cm_options,impexp,belog,about,cshmanual,aboutmodules,setup,opendocs,install,t3editor,felogin,feedit,recycler,t3skin,css_styled_content';
 \$TYPO3_CONF_VARS['SYS']['trustedHostsPattern'] = '.*';
 \$TYPO3_CONF_VARS['BE']['installToolPassword'] = '${INSTALL_HASH}';
 EOF

@@ -13,12 +13,11 @@
  * TYPO3_PROVISION=wizard create the empty database and stop, for the 1-2-3
  *                        install wizard at typo3/install/index.php?mode=123.
  *
- * The character set is 3.8's, latin1, and asserted at every layer 4.5 asserts
- * UTF-8 at: the server, the connection, the database, a column, and a stored value
- * read back byte for byte. Why 4.0 sides with 3.8 here is in docs/how-it-works.md.
- *
- * The probe below is written as escape sequences rather than typed, so no editor
- * or checkout can re-encode the bytes it is there to prove.
+ * The character set is 3.8's, latin1, and asserted at the layers 4.5 asserts
+ * UTF-8 at: the server, the connection, the database and the columns the tests
+ * write to. Why 4.0 sides with 3.8 here is in docs/how-it-works.md. What a stored
+ * value looks like is for the tests to prove, through the record editor, as an
+ * editor would store it.
  */
 
 function out($msg) {
@@ -47,34 +46,16 @@ $adminPass = env('TYPO3_ADMIN_PASSWORD', 'password');
 $mode    = env('TYPO3_PROVISION', 'auto');
 $docRoot = env('TYPO3_DOCROOT', '/var/www/html');
 
-/**
- * 4.5's probe, "Skaarhøj · Gödöllő · 日本語", stored the way 4.0 itself would
- * store it if an editor typed it into the backend.
- *
- * The backend is an ISO-8859-1 page, so the browser submits the form in
- * ISO-8859-1. Whatever that charset cannot carry, the browser sends as a decimal
- * numeric character reference: that is what HTML form submission does with an
- * unencodable character. So the ø, the ö and the middle dots arrive as single
- * latin1 bytes (F8, F6, B7), and the ő and the Japanese arrive as the ASCII text
- * "&#337;", "&#26085;", "&#26412;", "&#35486;". TYPO3 stores that unchanged.
- *
- * Every part of it still earns its place. The latin1 bytes are what a UTF-8 server
- * would destroy, because they are not valid UTF-8. The references are what
- * a visitor sees as ő and 日本語, because the frontend passes them through and the
- * browser decodes them; and they are what the record editor shows as literal
- * "&#337;", because TCEforms escapes the ampersand.
- *
- * The typo3-4-0 job computes the same bytes independently, with Python's
- * encode('latin-1', 'xmlcharrefreplace'), and compares.
- */
-$charsetProbe = "Skaarh\xF8j \xB7 G\xF6d\xF6ll&#337; \xB7 &#26085;&#26412;&#35486;";
+$siteName = env('TYPO3_SITENAME', 'TYPO3 4.0.13');
+$welcomeText = 'A text element, stored in tt_content and rendered by css_styled_content.';
 
 /**
  * The extensions a fresh 4.0.13 loads, in the order t3lib_extMgm loads them:
  * requiredExt, then extList (t3lib/config_default.php:105, :107), concatenated in
  * that order by t3lib_extMgm::typo3_loadExtensions()
  * (t3lib/class.t3lib_extmgm.php:925). The generated localconf.php overrides
- * neither.
+ * extList only to append css_styled_content (see entrypoint.sh), which is why it
+ * is the last entry below.
  *
  * Only cms, tsconfig_help and impexp carry an ext_tables.sql, and only cms and
  * tsconfig_help carry static data. The rest are listed anyway so this array can be
@@ -83,7 +64,7 @@ $charsetProbe = "Skaarh\xF8j \xB7 G\xF6d\xF6ll&#337; \xB7 &#26085;&#26412;&#3548
 $loadedExtensions = array(
     'cms', 'version', 'lang', 'sv',
     'tsconfig_help', 'context_help', 'extra_page_cm_options', 'impexp',
-    'belog', 'aboutmodules', 'setup', 'install',
+    'belog', 'aboutmodules', 'setup', 'install', 'css_styled_content',
 );
 
 /**
@@ -389,49 +370,47 @@ mysql_query($sql, $link) or fail('creating admin user: ' . mysql_error($link));
 out('created backend admin "' . $adminUser . '"');
 
 // --- seed a rendering frontend --------------------------------------------
+// A root page with one text element on it, rendered by css_styled_content, as a
+// site of the time was set up. The tests write their own text into both records
+// through the record editor, and read it back from the frontend.
 $sql = "INSERT INTO pages (pid, tstamp, crdate, sorting, title, doktype, hidden, deleted, perms_userid, perms_user, perms_group, perms_everybody)"
-     . " VALUES (0, " . $now . ", " . $now . ", 256, '" . mysql_real_escape_string($charsetProbe, $link) . "', 1, 0, 0, 1, 31, 31, 31)";
+     . " VALUES (0, " . $now . ", " . $now . ", 256, '" . mysql_real_escape_string($siteName, $link) . "', 1, 0, 0, 1, 31, 31, 31)";
 mysql_query($sql, $link) or fail('creating root page: ' . mysql_error($link));
 $rootPageUid = mysql_insert_id($link);
 out('created root page (uid ' . $rootPageUid . ')');
 
-// The round trip, before anything depends on it, in the same two halves 4.5
-// checks: a column that is not latin1 is the cause, a stored value that differs is
-// the symptom. Compared as hex, so that the message says which bytes came back.
-rejectUnlessLatin1('pages.title charset', readSingleValue($link,
-    "SELECT CHARACTER_SET_NAME FROM information_schema.COLUMNS"
-    . " WHERE TABLE_SCHEMA = '" . mysql_real_escape_string($dbName, $link) . "'"
-    . " AND TABLE_NAME = 'pages' AND COLUMN_NAME = 'title'"));
+$sql = "INSERT INTO tt_content (pid, tstamp, crdate, sorting, CType, header, bodytext, colPos, hidden, deleted)"
+     . " VALUES (" . $rootPageUid . ", " . $now . ", " . $now . ", 256, 'text', '"
+     . mysql_real_escape_string($siteName, $link) . "', '"
+     . mysql_real_escape_string($welcomeText, $link) . "', 0, 0, 0)";
+mysql_query($sql, $link) or fail('creating content element: ' . mysql_error($link));
+out('created content element (uid ' . mysql_insert_id($link) . ')');
 
-$storedHex = readSingleValue($link, 'SELECT HEX(title) FROM pages WHERE uid = ' . (int) $rootPageUid);
-if ($storedHex !== strtoupper(bin2hex($charsetProbe))) {
-    fail('the root page title did not survive the database: wrote 0x' . strtoupper(bin2hex($charsetProbe))
-        . ', stored 0x' . $storedHex);
+// The columns the record editor writes the tests' text into. A column that is not
+// latin1 would store what 4.0 sends as something else.
+foreach (array('pages.title', 'tt_content.header', 'tt_content.bodytext') as $column) {
+    $parts = explode('.', $column);
+    rejectUnlessLatin1($column . ' charset', readSingleValue($link,
+        "SELECT CHARACTER_SET_NAME FROM information_schema.COLUMNS"
+        . " WHERE TABLE_SCHEMA = '" . mysql_real_escape_string($dbName, $link) . "'"
+        . " AND TABLE_NAME = '" . $parts[0] . "' AND COLUMN_NAME = '" . $parts[1] . "'"));
 }
-out('latin1 round trip through pages.title: ok, ' . strlen($charsetProbe) . ' bytes back unchanged');
 
-// Plain, as in 3.8 and 4.5, and rendered through the real TypoScript pipeline.
-// page.40 reads the page title back out of the database, so the frontend's HTML
-// carries the round trip. TEXT does not escape what it is given, so the numeric
-// references in the probe reach the browser as references, and it decodes them.
+// css_styled_content's own template, included as the template record's "Include
+// static (from extensions)" field stores it, renders the page's content.
 $typoScript = 'page = PAGE' . chr(10)
     . 'page.typeNum = 0' . chr(10)
-    . 'page.10 = TEXT' . chr(10)
-    . 'page.10.value = TYPO3 4.0.13' . chr(10)
-    . 'page.10.wrap = <h1>|</h1>' . chr(10)
+    . 'page.10 < styles.content.get' . chr(10)
     . 'page.20 = TEXT' . chr(10)
     . 'page.20.value = Rendered by TypoScript on PHP ' . phpversion() . chr(10)
     . 'page.20.wrap = <p>|</p>' . chr(10)
     . 'page.30 = TEXT' . chr(10)
     . 'page.30.data = date:U' . chr(10)
     . 'page.30.strftime = %Y-%m-%d %H:%M:%S' . chr(10)
-    . 'page.30.wrap = <p>Page generated&nbsp;|</p>' . chr(10)
-    . 'page.40 = TEXT' . chr(10)
-    . 'page.40.data = page:title' . chr(10)
-    . 'page.40.wrap = <p id="charset-probe">|</p>' . chr(10);
+    . 'page.30.wrap = <p>Page generated&nbsp;|</p>' . chr(10);
 
-$sql = "INSERT INTO sys_template (pid, tstamp, crdate, sorting, title, root, clear, config, deleted, hidden)"
-     . " VALUES (" . $rootPageUid . ", " . $now . ", " . $now . ", 256, 'Main template', 1, 3, '"
+$sql = "INSERT INTO sys_template (pid, tstamp, crdate, sorting, title, root, clear, include_static_file, config, deleted, hidden)"
+     . " VALUES (" . $rootPageUid . ", " . $now . ", " . $now . ", 256, 'Main template', 1, 3, 'EXT:css_styled_content/static/', '"
      . mysql_real_escape_string($typoScript, $link) . "', 0, 0)";
 mysql_query($sql, $link) or fail('creating root template: ' . mysql_error($link));
 out('created root TypoScript template');

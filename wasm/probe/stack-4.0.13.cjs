@@ -3,10 +3,10 @@
 // default_charset control and its TLS step, with 4.0/ci-probe.py's bytes
 // (stack.cjs says how):
 //
-//   4.0/provision.php, unchanged, builds the schema, seeds the site and
-//   checks its latin1 round trip, against the shim answering as MySQL 5.5
-//   the frontend renders the seeded page through TypoScript, as ISO-8859-1,
-//   with the charset probe byte for byte
+//   4.0/provision.php, unchanged, builds the schema and seeds the site, a
+//   root page with a content element, against the shim answering as MySQL 5.5
+//   the frontend renders the content element through css_styled_content, as
+//   ISO-8859-1
 //   the backend serves its login form, and the Install Tool answers
 //   source files answer 403, and t3lib/ lists nothing
 //   every clock PHP and the server read starts at noon on the release day,
@@ -14,10 +14,11 @@
 //   a page with content_from_pid renders, through 4.0's own clone() for PHP 4
 //   the login works as 4.0.13's own form computes it, and opens the frameset
 //   a client with no cookie gets a session of its own
-//   the record editor shows the probe's latin1 bytes, and saves new ones,
-//   which MySQL stores and the frontend shows, byte for byte
-//   default_charset = UTF-8 does not blank the editor's title on PHP 4, as it
-//   does on the job's PHP 5.6
+//   the record editor saves the charset probe into the content element's
+//   bodytext as latin1 bytes, which MySQL stores and the editor and the
+//   frontend show, byte for byte
+//   default_charset = UTF-8 does not blank the bodytext on PHP 4, as it does
+//   on the job's PHP 5.6
 //   over HTTPS, redirects and the login go to https://
 //   the admin uploads a file into fileadmin/, and TYPO3 refuses a .php one
 //   the Install Tool's GD tests pass, and its ImageMagick tests say they are
@@ -30,9 +31,9 @@
 'use strict';
 
 const {
-  USER_AGENT, EDIT_ROOT_PAGE, check, finish, client, browser, router, runScript, printProvisionOutput,
-  assertNoPhpErrors, watchRejectedStatements, checkNothingRejected, checkClock, checkSecondProvision,
-  checkSourceProtection, checkRestore, checkBackendLogin, checkBackendLoginOverHttps, saveTitle, checkUploads,
+  USER_AGENT, EDIT_CONTENT_ELEMENT, SEEDED_TEXT, bodytextField, bodytextRendered, check, finish, client, browser, router,
+  runScript, printProvisionOutput, assertNoPhpErrors, watchRejectedStatements, checkNothingRejected, checkClock,
+  checkSecondProvision, checkSourceProtection, checkRestore, checkBackendLogin, checkBackendLoginOverHttps, saveBodytext, checkUploads,
   checkUploadRestored, checkInstallToolImages, checkInstallToolMail, checkFreshSessions, logIn,
 } = require('./stack.cjs');
 const assert = require('assert');
@@ -42,14 +43,12 @@ const { bootRelease, repoRoot } = require('./release-site.cjs');
 
 const workRoot = path.resolve(process.argv[2]);
 
-// The job's CHARSET_PROBE: what a visitor should read in <p id="charset-probe">.
+// The job's CHARSET_PROBE: what it saves into the content element's bodytext
+// through the record editor, and what a visitor should then read.
 const CHARSET_PROBE = 'Skaarhøj · Gödöllő · 日本語';
-// The job's CHARSET_PROBE_SAVED: the title it saves through the record editor,
-// so that the frontend shows a value TCEmain wrote, not one provision.php did.
-const CHARSET_PROBE_SAVED = 'Skaarhøj · Gödöllő · 日本語 · gespeichert';
-// The bytes 4.0 stores for it, as 4.0/ci-probe.py computes them, and not
-// copied from provision.php: an ISO-8859-1 form sends what latin1 can carry as
-// single bytes and the rest as decimal character references.
+// The bytes 4.0 stores for it, as 4.0/ci-probe.py computes them: an
+// ISO-8859-1 form sends what latin1 can carry as single bytes and the rest as
+// decimal character references.
 const storedForm = text => [...text].map(char => {
   const code = char.codePointAt(0);
   return code < 256 ? char : `&#${code};`;
@@ -58,15 +57,16 @@ const storedForm = text => [...text].map(char => {
 const asBrowserReads = bytes => bytes.replace(/&#(\d+);/g, (_, code) => String.fromCodePoint(Number(code)));
 // PHP's htmlspecialchars() with its default flags: & " < > and not '.
 const htmlspecialchars = bytes => bytes.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-// ci-probe.py's form mode: the record editor's title field, as bytes.
-const titleField = response => (response.text.match(/name="data\[pages\]\[1\]\[title\]" value="([^"]*)"/) || [])[1];
-// ci-probe.py's frontend mode: the probe paragraph, as bytes, and as the
-// visitor reads it.
-function assertProbeRendered(response, text) {
-  const probe = (response.text.match(/<p id="charset-probe">(.*?)<\/p>/s) || [])[1];
-  assert.strictEqual(probe, storedForm(text), 'the charset probe is not the bytes 4.0 stores');
-  assert.strictEqual(asBrowserReads(probe), text);
+// ci-probe.py's frontend mode: the bodytext paragraph, as bytes, and as the
+// visitor reads it. parseFunc_RTE escapes the text and restores entities, so
+// the references reach the browser as references.
+function assertBodytextRendered(response, text) {
+  const rendered = bodytextRendered(response);
+  assert.strictEqual(rendered, storedForm(text), 'the bodytext is not the bytes 4.0 stores');
+  assert.strictEqual(asBrowserReads(rendered), text);
 }
+// The content element's header, as css_styled_content renders it.
+const SEEDED_HEADING = /<h1[^>]*>TYPO3 4\.0\.13<\/h1>/;
 
 (async () => {
   const started = Date.now();
@@ -74,9 +74,9 @@ function assertProbeRendered(response, text) {
   const booted = Date.now() - started;
   const get = client(site);
   const rejected = watchRejectedStatements(site);
-  // What the frontend's probe must say: the root page's title, which the
-  // record editor changes below.
-  let probeText = CHARSET_PROBE;
+  // What the frontend's bodytext must say, which the record editor changes
+  // below.
+  let bodytext = SEEDED_TEXT;
 
   // The counts provision.php prints against the shim in its MySQL 5.5.62 mode.
   check('4.0/provision.php, unchanged, builds the schema and seeds the site, as MySQL 5.5 answers it', () => {
@@ -92,12 +92,11 @@ function assertProbeRendered(response, text) {
     assert.match(output, /\[provision\] imported 119 statements from sysext\/tsconfig_help\/ext_tables_static\+adt\.sql/);
     assert.match(output, /\[provision\] created backend admin "admin"/);
     assert.match(output, /\[provision\] created root page \(uid 1\)/);
+    assert.match(output, /\[provision\] created content element \(uid 1\)/);
+    for (const column of ['pages.title', 'tt_content.header', 'tt_content.bodytext']) {
+      assert.ok(output.includes(`[provision] ${column} charset: latin1\n`), `${column} is not latin1`);
+    }
     assert.match(output, /\[provision\] done\n$/);
-  });
-
-  check("provisioning's latin1 round trip through pages.title passes", () => {
-    assert.match(site.provisionOutput, /\[provision\] pages\.title charset: latin1\n/);
-    assert.match(site.provisionOutput, /\[provision\] latin1 round trip through pages\.title: ok, 50 bytes back unchanged\n/);
   });
 
   checkClock(site);
@@ -107,13 +106,13 @@ function assertProbeRendered(response, text) {
     const started = Date.now();
     const response = get('index.php');
     const elapsed = Date.now() - started;
-    if (!response.text.includes('<h1>TYPO3 4.0.13</h1>')) {
+    if (!SEEDED_HEADING.test(response.text)) {
       console.log(`     ${response.status}, ${response.body.length} bytes, log: ${response.log.join(' | ')}`);
       console.log(response.text.slice(0, 1500));
     }
     console.log(`     ${response.status}, ${response.body.length} bytes in ${elapsed} ms`);
     assert.strictEqual(response.status, 200);
-    assert.ok(response.text.includes('<h1>TYPO3 4.0.13</h1>'), 'the seeded heading is missing');
+    assert.match(response.text, SEEDED_HEADING, 'the seeded heading is missing');
     // The Docker job expects PHP 5.6.40, which its image runs. Here 4.0.13
     // runs on PHP 4.4.9, the oldest PHP it supports in this repository's
     // builds.
@@ -124,12 +123,12 @@ function assertProbeRendered(response, text) {
     // ISO-8859-1, as TSFE says when nothing overrides defaultCharSet.
     assert.match(response.header('Content-Type'), /^text\/html; *charset=iso-8859-1$/i);
     // Compared as bytes: written by provision.php or TCEmain, stored by the
-    // shim, read back by t3lib_db and rendered by TypoScript.
-    assertProbeRendered(response, probeText);
+    // shim, read back by t3lib_db and rendered by css_styled_content.
+    assertBodytextRendered(response, bodytext);
     assertNoPhpErrors(response);
   });
 
-  frontendChecks('the frontend renders the seeded page through TypoScript, as ISO-8859-1', get);
+  frontendChecks('the frontend renders the seeded content element through css_styled_content, as ISO-8859-1', get);
 
   check('the backend serves its login form, with a challenge', () => {
     const response = get('typo3/index.php');
@@ -179,7 +178,7 @@ function assertProbeRendered(response, text) {
       + `${uid}, 'Shows TSFE->contentPid', 0, 0, 'page.50 = TEXT\npage.50.data = TSFE:contentPid\npage.50.wrap = <p id="content-pid">|</p>')`);
     const response = get('index.php', { query: `id=${uid}` });
     assert.strictEqual(response.status, 200);
-    assert.ok(response.text.includes('<h1>TYPO3 4.0.13</h1>'), 'the subpage did not render the root template');
+    assert.match(response.text, SEEDED_HEADING, "the subpage did not render the root page's content");
     assert.match(response.text, /<p id="content-pid">1<\/p>/);
     assertNoPhpErrors(response);
   });
@@ -202,45 +201,46 @@ function assertProbeRendered(response, text) {
     assertNoPhpErrors(response);
   });
 
-  // The probe through TCEforms: htmlspecialchars() over the latin1 bytes,
-  // so the references arrive with their ampersands escaped and the field
-  // shows them as typed text.
   let editor = null;
-  check("alt_doc.php shows the root page's title as the bytes 4.0 stores, as ISO-8859-1", () => {
-    editor = admin('typo3/alt_doc.php', { query: EDIT_ROOT_PAGE });
+  check("alt_doc.php shows the content element's bodytext, as ISO-8859-1", () => {
+    editor = admin('typo3/alt_doc.php', { query: EDIT_CONTENT_ELEMENT });
     assert.strictEqual(editor.status, 200);
     assert.match(editor.header('Content-Type'), /^text\/html; *charset=iso-8859-1$/i);
-    assert.strictEqual(titleField(editor), htmlspecialchars(storedForm(CHARSET_PROBE)));
+    assert.strictEqual(bodytextField(editor), SEEDED_TEXT);
     assertNoPhpErrors(editor);
   });
 
-  // The job posts only the title and doSave, percent-encoded byte for byte.
-  // This posts the whole form, as a browser does on an ISO-8859-1 page: what
-  // latin1 carries as single bytes, the rest as character references.
-  check('saving a latin1 title stores its bytes, and the form and the frontend show them', () => {
-    const response = saveTitle(admin, editor, storedForm(CHARSET_PROBE_SAVED));
+  // The job posts only the bodytext and doSave, percent-encoded byte for
+  // byte. This posts the whole form, as a browser does on an ISO-8859-1 page:
+  // what latin1 carries as single bytes, the rest as character references.
+  // The probe comes back through TCEforms as htmlspecialchars() over the
+  // latin1 bytes, so the references arrive with their ampersands escaped and
+  // the field shows them as typed text.
+  check('saving a latin1 bodytext stores its bytes, and the form and the frontend show them', () => {
+    const response = saveBodytext(admin, editor, storedForm(CHARSET_PROBE));
     assert.strictEqual(response.status, 200);
-    assert.strictEqual(titleField(response), htmlspecialchars(storedForm(CHARSET_PROBE_SAVED)));
+    assert.strictEqual(bodytextField(response), htmlspecialchars(storedForm(CHARSET_PROBE)));
     assertNoPhpErrors(response);
     // What TCEmain wrote, through the shim's HEX(): one byte per latin1
     // character, so F8 for the ø and not UTF-8's C3B8.
-    assert.deepStrictEqual(site.query('SELECT HEX(title) FROM pages WHERE uid = 1').rows,
-      [[Buffer.from(storedForm(CHARSET_PROBE_SAVED), 'latin1').toString('hex').toUpperCase()]]);
+    assert.deepStrictEqual(site.query('SELECT HEX(bodytext) FROM tt_content WHERE uid = 1').rows,
+      [[Buffer.from(storedForm(CHARSET_PROBE), 'latin1').toString('hex').toUpperCase()]]);
     // no_cache, as in the job: the question is what the database holds.
     const frontend = get('index.php', { query: 'no_cache=1' });
-    assertProbeRendered(frontend, CHARSET_PROBE_SAVED);
+    assertBodytextRendered(frontend, CHARSET_PROBE);
     assertNoPhpErrors(frontend);
-    probeText = CHARSET_PROBE_SAVED;
+    bodytext = CHARSET_PROBE;
   });
   // And without no_cache: TCEmain cleared the page's cache.
-  frontendChecks('the frontend renders the saved title through TypoScript', get);
+  frontendChecks('the frontend renders the saved bodytext through css_styled_content', get);
 
   // --- the job's "The default_charset control" step ---
 
   // On PHP 5.6, htmlspecialchars() takes its charset from default_charset
   // when the call names none, and 4.0 never names one. Under 5.6's own
   // default, UTF-8, every latin1 byte is invalid, and the job shows the
-  // editor's title blank: 4.0/php-legacy.ini's ISO-8859-1 is load-bearing.
+  // bodytext blank, in the editor and on the frontend: 4.0/php-legacy.ini's
+  // ISO-8859-1 is load-bearing.
   // PHP 4.4.9's htmlspecialchars() takes ISO-8859-1 whenever the call names
   // no charset (ext/standard/html.c:649), whatever default_charset says. So
   // here the control runs the other way: the same setting changes nothing.
@@ -255,17 +255,17 @@ function assertProbeRendered(response, text) {
     const response = runScript(control, 'charset.php', ['<?php', "echo ini_get('default_charset');"]);
     assert.strictEqual(response.text, 'UTF-8');
   });
-  check("under it, the editor still shows the title's bytes, where the job's PHP 5.6 shows it blank", () => {
+  check("under it, the editor and the frontend still show the bodytext's bytes, where the job's PHP 5.6 shows them blank", () => {
     const controlAdmin = browser(control);
     assert.strictEqual(logIn(controlAdmin).status, 302);
-    const edit = controlAdmin('typo3/alt_doc.php', { query: EDIT_ROOT_PAGE });
+    const edit = controlAdmin('typo3/alt_doc.php', { query: EDIT_CONTENT_ELEMENT });
     assert.strictEqual(edit.status, 200);
     // TYPO3 still names ISO-8859-1 in its own header, as in the job.
     assert.match(edit.header('Content-Type'), /^text\/html; *charset=iso-8859-1$/i);
-    assert.strictEqual(titleField(edit), htmlspecialchars(storedForm(CHARSET_PROBE_SAVED)));
+    assert.strictEqual(bodytextField(edit), htmlspecialchars(storedForm(CHARSET_PROBE)));
     assertNoPhpErrors(edit);
     const frontend = client(control)('index.php', { query: 'no_cache=1' });
-    assertProbeRendered(frontend, CHARSET_PROBE_SAVED);
+    assertBodytextRendered(frontend, CHARSET_PROBE);
   });
 
   // --- the job's "Behind TLS" step ---
@@ -281,7 +281,7 @@ function assertProbeRendered(response, text) {
   check('over HTTPS, the frontend renders the page', () => {
     const response = router(site, { https: true })('');
     assert.strictEqual(response.status, 200);
-    assert.ok(response.text.includes('<h1>TYPO3 4.0.13</h1>'), 'the seeded heading is missing');
+    assert.match(response.text, SEEDED_HEADING, 'the seeded heading is missing');
     assertNoPhpErrors(response);
   });
   const secure = checkBackendLoginOverHttps(site);

@@ -75,8 +75,9 @@
       // 4.5.40 takes the site for one that was just upgraded
       // (t3lib/config_default.php:725-770).
       "$TYPO3_CONF_VARS['SYS']['compat_version'] = '4.5';",
-      // The default list, and t3skin: without it the backend has no skin.
-      "$TYPO3_CONF_VARS['EXT']['extList'] = 'filelist,version,tsconfig_help,context_help,extra_page_cm_options,impexp,belog,about,cshmanual,aboutmodules,setup,opendocs,install,t3editor,felogin,feedit,recycler,t3skin';",
+      // The default list, t3skin, without which the backend has no skin, and
+      // css_styled_content, which renders the seeded page's content element.
+      "$TYPO3_CONF_VARS['EXT']['extList'] = 'filelist,version,tsconfig_help,context_help,extra_page_cm_options,impexp,belog,about,cshmanual,aboutmodules,setup,opendocs,install,t3editor,felogin,feedit,recycler,t3skin,css_styled_content';",
       // The page is served from whatever host the tab is on.
       "$TYPO3_CONF_VARS['SYS']['trustedHostsPattern'] = '.*';",
       // md5('joh316'), as every stack here sets it.

@@ -75,6 +75,9 @@
       // What the 1-2-3 wizard writes for a new site; the default is '3.8'
       // (t3lib/config_default.php:60).
       "$TYPO3_CONF_VARS['SYS']['compat_version'] = '4.0';",
+      // The default list, and css_styled_content, which renders the seeded
+      // page's content element.
+      "$TYPO3_CONF_VARS['EXT']['extList'] = 'tsconfig_help,context_help,extra_page_cm_options,impexp,belog,aboutmodules,setup,install,css_styled_content';",
       // The entrypoint's fixed key: TYPO3 salts cHash with it, and a fixed one
       // keeps frontend URLs the same in Docker and here.
       "$TYPO3_CONF_VARS['SYS']['encryptionKey'] = '7d2a9f4c1e8b6d3a0f5c9e2b7a4d1f8c3e6b0a9d5f2c8e1b4a7d0c3f6e9b2a5d';",

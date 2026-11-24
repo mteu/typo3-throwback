@@ -39,6 +39,17 @@ const visibleText = response => response.text.replace(/<[^>]+>/g, ' ').replace(/
 const EDIT_ROOT_PAGE = 'returnUrl=db_layout.php%3Fid%3D1&edit%5Bpages%5D%5B1%5D=edit';
 // The record editor's title, as the hidden field the form posts carries it.
 const titleField = response => (response.text.match(/name="data\[pages\]\[1\]\[title\]" value="([^"]*)"/) || [])[1];
+// alt_doc.php for the content element the provision scripts of 4.0 and later
+// seed on the root page.
+const EDIT_CONTENT_ELEMENT = 'returnUrl=db_layout.php%3Fid%3D1&edit%5Btt_content%5D%5B1%5D=edit';
+// What they seed as its bodytext.
+const SEEDED_TEXT = 'A text element, stored in tt_content and rendered by css_styled_content.';
+// The record editor's bodytext, as its <textarea> carries it: TCEforms writes
+// the value through formatForTextarea(), a newline and htmlspecialchars().
+const bodytextField = response => (response.text.match(/<textarea[^>]*name="data\[tt_content\]\[1\]\[bodytext\]"[^>]*>\n?([\s\S]*?)<\/textarea>/) || [])[1];
+// The bodytext as css_styled_content renders it: parseFunc_RTE wraps each line
+// in a paragraph of class bodytext.
+const bodytextRendered = response => (response.text.match(/<p class="bodytext">([\s\S]*?)<\/p>/) || [])[1];
 
 let failures = 0;
 function check(label, test) {
@@ -160,14 +171,14 @@ function checkBackendLoginOverHttps(site) {
   return secure;
 }
 
-// The record editor's form as a browser posts it when the title is changed
-// and the save button is clicked: to alt_doc.php itself, which hands the
-// data to TCEmain. The visible field and the hidden one the browser's
-// JavaScript copies it into both carry the new title. title is a latin1
-// string, as an ISO-8859-1 page submits it.
-function saveTitle(admin, editor, title) {
+// The record editor's form, opened with editQuery, as a browser posts it when
+// one field is changed and the save button is clicked: to alt_doc.php itself,
+// which hands the data to TCEmain. The field and the hidden one an input's
+// JavaScript copies it into (<field>_hr is the visible one) both carry the new
+// value. value is a latin1 string, as an ISO-8859-1 page submits it.
+function saveField(admin, editor, editQuery, field, value) {
   const { action, fields } = readForm(editor.text, 'editform');
-  const posted = fields.map(([name, value]) => [name, /^data\[pages\]\[1\]\[title\](_hr)?$/.test(name) ? title : value]);
+  const posted = fields.map(([name, old]) => [name, name === field || name === `${field}_hr` ? value : old]);
   posted.push(['_savedok.x', '8'], ['_savedok.y', '9']);
   const url = new URL(action, 'http://localhost/');
   return admin(url.pathname.slice(1), {
@@ -175,11 +186,13 @@ function saveTitle(admin, editor, title) {
     query: url.search.slice(1),
     headers: {
       'Content-Type': `multipart/form-data; boundary=${BOUNDARY}`,
-      Referer: `http://localhost/typo3/alt_doc.php?${EDIT_ROOT_PAGE}`,
+      Referer: `http://localhost/typo3/alt_doc.php?${editQuery}`,
     },
-    body: multipart(BOUNDARY, posted.map(([name, value]) => ({ name, value }))),
+    body: multipart(BOUNDARY, posted.map(([name, posting]) => ({ name, value: posting }))),
   });
 }
+const saveTitle = (admin, editor, title) => saveField(admin, editor, EDIT_ROOT_PAGE, 'data[pages][1][title]', title);
+const saveBodytext = (admin, editor, text) => saveField(admin, editor, EDIT_CONTENT_ELEMENT, 'data[tt_content][1][bodytext]', text);
 
 // ci-backend-session.sh's assert_admin_can_upload: the file list's upload
 // form, posted to tce_file.php. On success it redirects; on any error it
@@ -518,10 +531,10 @@ async function checkRestore(site, workRoot, frontendCheck) {
 }
 
 module.exports = {
-  USER_AGENT, EDIT_ROOT_PAGE, md5, utf8Bytes, titleField, visibleText, check, finish, cookiesFrom, client, browser, router, runScript,
+  USER_AGENT, EDIT_ROOT_PAGE, EDIT_CONTENT_ELEMENT, SEEDED_TEXT, md5, utf8Bytes, titleField, bodytextField, bodytextRendered, visibleText, check, finish, cookiesFrom, client, browser, router, runScript,
   printProvisionOutput, assertNoPhpErrors, watchRejectedStatements, checkNothingRejected, checkClock,
   checkSecondProvision, checkSourceProtection, checkRestore,
-  logIn, checkBackendLogin, checkBackendLoginOverHttps, saveTitle, upload, UPLOADED, checkUploads, checkUploadRestored,
+  logIn, checkBackendLogin, checkBackendLoginOverHttps, saveTitle, saveBodytext, upload, UPLOADED, checkUploads, checkUploadRestored,
   checkInstallToolImages, checkInstallToolMail, checkFreshSessions,
   callPageTree, assertPageTree, RAW_POST_DEPRECATION, checkRawPostControl,
 };

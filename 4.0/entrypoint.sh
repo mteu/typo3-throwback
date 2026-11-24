@@ -88,6 +88,12 @@ EOF
 // JavaScript (class.tslib_fe.php:1785). A fresh 4.0 says 4.0.
 \$TYPO3_CONF_VARS['SYS']['compat_version'] = '4.0';
 
+// The default list (config_default.php:107), plus css_styled_content, which
+// renders the seeded page's content element. A fresh 4.0 leaves it to the
+// Extension Manager; a site of the time installed it on day one. It has no
+// ext_tables.sql, so provision.php's schema is unchanged by it.
+\$TYPO3_CONF_VARS['EXT']['extList'] = 'tsconfig_help,context_help,extra_page_cm_options,impexp,belog,aboutmodules,setup,install,css_styled_content';
+
 // No forceCharset and no setDBinit, on purpose. Both default to empty
 // (config_default.php:141, :88), which is what makes a fresh 4.0 an ISO-8859-1
 // site: the backend takes its charset from the user's language, iso-8859-1 for

@@ -111,6 +111,7 @@ on:
       - '6.2/ci-rsa.py'
       - 'vendor-src/typo3-6.2.31/typo3_src-6.2.31.tar.gz'
       - '.github/scripts/ci-assert.sh'
+      - '.github/scripts/ci-bodytext-field.py'
       - '.github/workflows/images.yml'
   # Monthly, an hour after the image mirror. These builds install Debian packages
   # from archived suites, and a suite that is pruned breaks them without a single
@@ -251,6 +252,7 @@ jobs:
               - '4.5/ci-login.sh'
               - '4.5/ci-extdirect.sh'
               - '4.5/ci-check-page-tree.py'
+              - '.github/scripts/ci-bodytext-field.py'
               - '.github/scripts/ci-assert.sh'
               - '.github/workflows/images.yml'
             stack_6_2:
@@ -259,6 +261,7 @@ jobs:
               - '6.2/ci-extdirect.sh'
               - '6.2/ci-check-page-tree.py'
               - '6.2/ci-rsa.py'
+              - '.github/scripts/ci-bodytext-field.py'
               - '.github/scripts/ci-assert.sh'
               - '.github/workflows/images.yml'
 
@@ -725,15 +728,15 @@ jobs:
       # COMPOSE_FILE points.
       COMPOSE: docker compose
       BASE: http://127.0.0.1:8040
-      # What a reader should see where 4.0/provision.php seeded the root page's
-      # title. 4.0 is ISO-8859-1, so it stores the ø, the ö and the dots as latin1
-      # bytes and the rest as numeric character references, the way the backend's
-      # own form submits them. 4.0/ci-probe.py computes those bytes from this
-      # text, independently of provision.php.
+      # What the job saves into the seeded content element's bodytext through the
+      # record editor, and what a reader should then see on the frontend. 4.0 is
+      # ISO-8859-1, so it stores the ø, the ö and the dots as latin1 bytes and the
+      # rest as numeric character references, the way the backend's own form
+      # submits them. 4.0/ci-probe.py computes those bytes from this text,
+      # independently of TYPO3.
       CHARSET_PROBE: 'Skaarhøj · Gödöllő · 日本語'
-      # The title the job saves through the record editor, so that the frontend
-      # can show a value TCEmain wrote rather than one provision.php did.
-      CHARSET_PROBE_SAVED: 'Skaarhøj · Gödöllő · 日本語 · gespeichert'
+      # What 4.0/provision.php seeds as that bodytext.
+      SEEDED_TEXT: 'A text element, stored in tt_content and rendered by css_styled_content.'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
@@ -811,15 +814,15 @@ jobs:
           . .github/scripts/ci-assert.sh
 
           curl -fsS -A "$UA" -D fe.headers "$BASE/" -o fe.html
-          grep -q '<h1>TYPO3 4.0.13</h1>' fe.html
+          # The seeded content element, as css_styled_content renders it: its
+          # header in an <h1> and its bodytext in a paragraph.
+          grep -qE '<h1[^>]*>TYPO3 4\.0\.13</h1>' fe.html
+          python3 -I 4.0/ci-probe.py frontend fe.html "$SEEDED_TEXT"
           grep -q 'Rendered by TypoScript on PHP 5.6.40' fe.html
           grep -q 'Page generated&nbsp;2009-07-02 12:00:00' fe.html
           # ISO-8859-1, as TSFE says when nothing overrides defaultCharSet
-          # (class.tslib_fe.php:348, :2855), and the probe through it byte for byte:
-          # written by provision.php, stored by MySQL as latin1, read back by
-          # t3lib_db, rendered by TypoScript, and decoded the way a browser would.
+          # (class.tslib_fe.php:348, :2855).
           grep -qi '^content-type: text/html; *charset=iso-8859-1' fe.headers
-          python3 -I 4.0/ci-probe.py frontend fe.html "$CHARSET_PROBE"
           refute_php_errors_in fe.html
 
           curl -fsS -A "$UA" "$BASE/typo3/index.php" -o be.html
@@ -850,7 +853,8 @@ jobs:
           echo "smoke test passed"
 
       # Logs in the way the form's JavaScript does, opens the frameset, then opens
-      # and saves the seeded page. The redirect is asserted rather than followed,
+      # the seeded content element and saves the probe into its bodytext. The
+      # redirect is asserted rather than followed,
       # because where it points is the finding: 4.0's redirects are absolute,
       # so plain HTTP must answer http:// here and the TLS phase must answer
       # https://.
@@ -872,48 +876,50 @@ jobs:
           grep -q 'src="alt_intro.php"' alt_main.html
           refute_php_errors_in alt_main.html
 
-          edit_url="$BASE/typo3/alt_doc.php?returnUrl=db_layout.php%3Fid%3D1&edit%5Bpages%5D%5B1%5D=edit"
+          edit_url="$BASE/typo3/alt_doc.php?returnUrl=db_layout.php%3Fid%3D1&edit%5Btt_content%5D%5B1%5D=edit"
           code=$(curl -sS -A "$UA" -b jar -D edit.headers -o edit.html -w '%{http_code}' "$edit_url")
           if [ "$code" != 200 ]; then
             echo "::error::alt_doc.php answered $code, not 200"
             exit 1
           fi
           grep -qi '^content-type: text/html; *charset=iso-8859-1' edit.headers
-          # The probe through TCEforms: htmlspecialchars() over the latin1 bytes,
-          # so the references arrive with their ampersands escaped and the field
-          # shows them as typed text.
-          python3 -I 4.0/ci-probe.py form edit.html "$CHARSET_PROBE"
+          python3 -I 4.0/ci-probe.py form edit.html "$SEEDED_TEXT"
           refute_php_errors_in edit.html
 
-          # Saving, as the form does: doSave, the title percent-encoded byte for
+          # Saving, as the form does: doSave, the bodytext percent-encoded byte for
           # byte as an ISO-8859-1 page submits it, and a Referer on this host
           # (typo3/alt_doc.php:290-292).
           # -d @file rather than --data-binary: the body is already percent-encoded,
           # and -d drops the trailing newline print() leaves, which would otherwise
-          # become part of the title.
-          python3 -I 4.0/ci-probe.py post-title "$CHARSET_PROBE_SAVED" > save.body
+          # become part of the bodytext.
+          python3 -I 4.0/ci-probe.py post "$CHARSET_PROBE" > save.body
           code=$(curl -sS -A "$UA" -b jar -e "$edit_url" -o saved.html -w '%{http_code}' \
             -d @save.body -d doSave=1 "$edit_url")
           if [ "$code" != 200 ]; then
             echo "::error::saving through alt_doc.php answered $code, not 200"
             exit 1
           fi
-          python3 -I 4.0/ci-probe.py form saved.html "$CHARSET_PROBE_SAVED"
+          # The probe through TCEforms: htmlspecialchars() over the latin1 bytes,
+          # so the references arrive with their ampersands escaped and the field
+          # shows them as typed text.
+          python3 -I 4.0/ci-probe.py form saved.html "$CHARSET_PROBE"
           refute_php_errors_in saved.html
 
           # What TCEmain wrote, read from MySQL itself: one byte per latin1
           # character, so F8 for the ø and not UTF-8's C3B8.
-          expected=$(python3 -I 4.0/ci-probe.py stored-hex "$CHARSET_PROBE_SAVED")
-          stored=$(docker compose exec -T db mysql -utypo3 -ptypo3 -N -B -e 'SELECT HEX(title) FROM pages WHERE uid = 1' typo3)
+          expected=$(python3 -I 4.0/ci-probe.py stored-hex "$CHARSET_PROBE")
+          stored=$(docker compose exec -T db mysql -utypo3 -ptypo3 -N -B -e 'SELECT HEX(bodytext) FROM tt_content WHERE uid = 1' typo3)
           if [ "$stored" != "$expected" ]; then
-            echo "::error::pages.title holds 0x$stored, expected 0x$expected"
+            echo "::error::tt_content.bodytext holds 0x$stored, expected 0x$expected"
             exit 1
           fi
 
-          # And back out through TypoScript. no_cache, because the question is what
-          # the database now holds, not whether TCEmain cleared the page cache.
+          # And back out through css_styled_content: read back by t3lib_db,
+          # rendered by parseFunc_RTE, and decoded the way a browser would.
+          # no_cache, because the question is what the database now holds, not
+          # whether TCEmain cleared the page cache.
           curl -fsS -A "$UA" "$BASE/?no_cache=1" -o fe-saved.html
-          python3 -I 4.0/ci-probe.py frontend fe-saved.html "$CHARSET_PROBE_SAVED"
+          python3 -I 4.0/ci-probe.py frontend fe-saved.html "$CHARSET_PROBE"
           refute_php_errors_in fe-saved.html
 
           assert_admin_can_upload /var/www/html/fileadmin
@@ -923,9 +929,9 @@ jobs:
       # charset when it calls htmlspecialchars(), so PHP 5.6 uses default_charset,
       # and 4.0/php-legacy.ini pins it to ISO-8859-1. The claim is that the pin is
       # load-bearing: under 5.6's own default, UTF-8, every latin1 byte is an
-      # invalid sequence, htmlspecialchars() answers with an empty string, and the
-      # record editor shows the title blank — while the frontend, which does not
-      # escape it, looks perfectly fine.
+      # invalid sequence, htmlspecialchars() answers with an empty string, and
+      # both the record editor and css_styled_content's parseFunc_RTE, which
+      # escapes the bodytext too, show it blank.
       #
       # The control file sets only that line, plus expose_php Off as the marker,
       # and the judged reply has to carry the marker: a blank field is an absence,
@@ -937,7 +943,7 @@ jobs:
           . .github/scripts/ci-backend-session.sh
           . 4.0/ci-php-control.sh
           login_and_expect "http://127.0.0.1:8040/typo3/alt_main.php"
-          edit_url="$BASE/typo3/alt_doc.php?returnUrl=db_layout.php%3Fid%3D1&edit%5Bpages%5D%5B1%5D=edit"
+          edit_url="$BASE/typo3/alt_doc.php?returnUrl=db_layout.php%3Fid%3D1&edit%5Btt_content%5D%5B1%5D=edit"
 
           apply_php_control Off 'default_charset = "UTF-8"'
           curl -fsS -A "$UA" -b jar -D control.edit.headers -o control-edit.html "$edit_url"
@@ -948,13 +954,13 @@ jobs:
           grep -qi '^content-type: text/html; *charset=iso-8859-1' control.edit.headers
           curl -fsS -A "$UA" -D control.fe.headers "$BASE/?no_cache=1" -o control-fe.html
           served_with_expose_php control.fe.headers Off
-          python3 -I 4.0/ci-probe.py frontend control-fe.html "$CHARSET_PROBE_SAVED"
-          echo "control: under default_charset UTF-8 the editor blanks the title and the frontend does not show it"
+          python3 -I 4.0/ci-probe.py frontend-blank control-fe.html
+          echo "control: under default_charset UTF-8 the editor and the frontend both blank the bodytext"
 
           clear_php_control
           curl -fsS -A "$UA" -b jar -D restored.edit.headers -o restored-edit.html "$edit_url"
           served_with_expose_php restored.edit.headers On
-          python3 -I 4.0/ci-probe.py form restored-edit.html "$CHARSET_PROBE_SAVED"
+          python3 -I 4.0/ci-probe.py form restored-edit.html "$CHARSET_PROBE"
           echo "the default_charset control passed"
 
       # The TLS finding, run. 4.0's redirects are absolute, as
@@ -994,7 +1000,7 @@ jobs:
           grep -q 'told it sits behind TLS' web-tls.log
 
           curl -fsS -A "$UA" "$BASE/" -o fe-tls.html
-          grep -q '<h1>TYPO3 4.0.13</h1>' fe-tls.html
+          grep -qE '<h1[^>]*>TYPO3 4\.0\.13</h1>' fe-tls.html
           refute_php_errors_in fe-tls.html
 
           # Any redirect will do; this one needs no login (typo3/index_re.php:43-45).
@@ -1040,10 +1046,13 @@ jobs:
       # The job's own control step calls compose through this.
       COMPOSE: docker compose
       BASE: http://127.0.0.1:8045
-      # The root page's title, as 4.5/provision.php writes it. ø and ö are
-      # inside latin1; ő and the Japanese are not, so this string only arrives
-      # intact if the database stored UTF-8.
+      # What the job saves through the record editor, into the root page's
+      # title and the seeded content element's bodytext. ø and ö are inside
+      # latin1; ő and the Japanese are not, so this string only arrives intact
+      # if the database stored UTF-8.
       CHARSET_PROBE: 'Skaarhøj · Gödöllő · 日本語'
+      # What 4.5/provision.php seeds as that bodytext.
+      SEEDED_TEXT: 'A text element, stored in tt_content and rendered by css_styled_content.'
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -1122,16 +1131,12 @@ jobs:
           . .github/scripts/ci-assert.sh
 
           curl -fsS -A "$UA" -D fe.headers "$BASE/" -o fe.html
-          grep -q '<h1>TYPO3 4.5.40</h1>' fe.html
+          # The seeded content element, as css_styled_content renders it: its
+          # header in an <h1> and its bodytext in a paragraph.
+          grep -qE '<h1[^>]*>TYPO3 4\.5\.40</h1>' fe.html
+          grep -qF "<p class=\"bodytext\">${SEEDED_TEXT}</p>" fe.html
           grep -q 'Rendered by TypoScript on PHP 5.6.40' fe.html
           grep -q 'Page generated&nbsp;2015-02-19 12:00:00' fe.html
-          # The UTF-8 round trip, end to end: written by provision.php, stored by
-          # MySQL, read back by t3lib_db and rendered by TypoScript.
-          if ! grep -qF "<p id=\"charset-probe\">${CHARSET_PROBE}</p>" fe.html; then
-            echo "::error::the root page title did not survive as UTF-8"
-            grep -o '<p id="charset-probe">.*</p>' fe.html || true
-            exit 1
-          fi
           grep -qi '^content-type: text/html; *charset=utf-8' fe.headers
           refute_php_errors_in fe.html
 
@@ -1160,8 +1165,9 @@ jobs:
 
           echo "smoke test passed"
 
-      # Logs in the way the form's JavaScript does, opens the backend and edits
-      # the seeded page. The 303 is asserted rather than followed, because where
+      # Logs in the way the form's JavaScript does, opens the backend, then opens
+      # the seeded page and its content element and saves the probe into both.
+      # The 303 is asserted rather than followed, because where
       # it points is the finding: 4.5 builds every redirect as an absolute URL,
       # so plain HTTP must answer http:// here, and the phase after this
       # one must answer https://.
@@ -1178,19 +1184,61 @@ jobs:
           grep -qF '"siteUrl":"http:\/\/127.0.0.1:8045\/"' backend.html
           refute_php_errors_in backend.html
 
-          code=$(curl -sS -A "$UA" -b jar -o edit.html -w '%{http_code}' \
-            "$BASE/typo3/alt_doc.php?returnUrl=db_layout.php%3Fid%3D1&edit%5Bpages%5D%5B1%5D=edit")
+          # Both records in one form, as the editor opens them side by side.
+          edit_url="$BASE/typo3/alt_doc.php?returnUrl=db_layout.php%3Fid%3D1&edit%5Bpages%5D%5B1%5D=edit&edit%5Btt_content%5D%5B1%5D=edit"
+          code=$(curl -sS -A "$UA" -b jar -o edit.html -w '%{http_code}' "$edit_url")
           if [ "$code" != 200 ]; then
             echo "::error::alt_doc.php answered $code, not 200"
             exit 1
           fi
-          if ! grep -q 'name="data\[pages\]\[1\]\[title\]' edit.html; then
+          if ! grep -qF 'name="data[pages][1][title]" value="TYPO3 4.5.40"' edit.html; then
             echo "::error::alt_doc.php did not render the page header form ($(wc -c < edit.html) bytes)"
             head -c 2000 edit.html
             exit 1
           fi
-          # The probe once more, through TCEforms rather than TypoScript.
-          grep -qF "$CHARSET_PROBE" edit.html
+          python3 -I .github/scripts/ci-bodytext-field.py edit.html "$SEEDED_TEXT"
+          refute_php_errors_in edit.html
+
+          # Saving, as the form does: doSave, the form's own editRecord token
+          # (typo3/alt_doc.php:1502 checks it before anything is processed), and
+          # a Referer on this host (:310).
+          token=$(grep -oE 'name="formToken" value="[0-9a-f]+"' edit.html | head -1 | grep -oE '[0-9a-f]{20,}')
+          test -n "$token"
+          code=$(curl -sS -A "$UA" -b jar -e "$edit_url" -o saved.html -w '%{http_code}' \
+            --data-urlencode "data[pages][1][title]=${CHARSET_PROBE}" \
+            --data-urlencode "data[tt_content][1][bodytext]=${CHARSET_PROBE}" \
+            -d doSave=1 -d "formToken=$token" "$edit_url")
+          if [ "$code" != 200 ]; then
+            echo "::error::saving through alt_doc.php answered $code, not 200"
+            exit 1
+          fi
+          # The probe through TCEforms.
+          grep -qF "name=\"data[pages][1][title]\" value=\"${CHARSET_PROBE}\"" saved.html
+          python3 -I .github/scripts/ci-bodytext-field.py saved.html "$CHARSET_PROBE"
+          refute_php_errors_in saved.html
+
+          # What TCEmain wrote, read from MySQL itself: UTF-8 bytes, so C3B8 for
+          # the ø, and three bytes for each kanji.
+          expected=$(python3 -I -c 'import os, sys; print(os.fsencode(sys.argv[1]).hex().upper())' "$CHARSET_PROBE")
+          for column in pages.title tt_content.bodytext; do
+            stored=$($COMPOSE exec -T db mysql -utypo3 -ptypo3 -N -B \
+              -e "SELECT HEX(${column#*.}) FROM ${column%.*} WHERE uid = 1" typo3)
+            if [ "$stored" != "$expected" ]; then
+              echo "::error::$column holds 0x$stored, expected 0x$expected"
+              exit 1
+            fi
+          done
+
+          # And back out through css_styled_content: read back by t3lib_db and
+          # rendered by parseFunc_RTE. no_cache, because the question is what the
+          # database now holds, not whether TCEmain cleared the page cache.
+          curl -fsS -A "$UA" "$BASE/?no_cache=1" -o fe-saved.html
+          if ! grep -qF "<p class=\"bodytext\">${CHARSET_PROBE}</p>" fe-saved.html; then
+            echo "::error::the bodytext did not survive as UTF-8"
+            grep -o '<p class="bodytext">.*</p>' fe-saved.html || true
+            exit 1
+          fi
+          refute_php_errors_in fe-saved.html
           echo "backend login and record editing passed"
 
       # The backend's AJAX path, which nothing above takes, and the PHP 5.6
@@ -1202,7 +1250,7 @@ jobs:
       # Three phases, so that the shipped setting is shown to be the thing that
       # matters rather than assumed to be:
       #
-      #   1. as shipped: the page tree answers, as JSON, with the seeded page
+      #   1. as shipped: the page tree answers, as JSON, with the page renamed above
       #   2. the shipped ini plus every display PHP has (display_errors,
       #      display_startup_errors, E_ALL): the deprecation still does not
       #      appear, and the reply is still the whole page tree as JSON
@@ -1326,7 +1374,7 @@ jobs:
           grep -q 'told it sits behind TLS' web-tls.log
 
           curl -fsS -A "$UA" "$BASE/" -o fe-tls.html
-          grep -q '<h1>TYPO3 4.5.40</h1>' fe-tls.html
+          grep -qE '<h1[^>]*>TYPO3 4\.5\.40</h1>' fe-tls.html
 
           # Any redirect will do; this one needs no login (typo3/index_re.php:45).
           location=$(curl -sS -A "$UA" -o /dev/null -D - "$BASE/typo3/index_re.php" \
@@ -1369,8 +1417,8 @@ jobs:
     if: needs.changes.outputs.image_6_2 == 'true' || needs.changes.outputs.stack_6_2 == 'true'
     runs-on: ubuntu-latest
     # Same base digest as the other PHP 5.6 stacks, and no dependency on php4-base.
-    # Parity with typo3-4-5, step for step: the frontend with the UTF-8 probe, a
-    # backend login and record editing, Ext.Direct with the raw-POST control, and
+    # Parity with typo3-4-5, step for step: the seeded frontend, a backend login
+    # and record editing with the UTF-8 probe, Ext.Direct with the raw-POST control, and
     # the TLS phase. What differs is underneath: the stack is set up by 6.2's own
     # installer on first boot, and the login is rsaauth's.
     # docs/how-it-works.md.
@@ -1380,12 +1428,12 @@ jobs:
       # Every step calls compose through this, so it follows COMPOSE_FILE.
       COMPOSE: docker compose
       BASE: http://127.0.0.1:8062
-      # 4.5's probe, stored as UTF-8 by 6.2/provision.php. ø and ö are
-      # inside latin1; ő and the Japanese are not.
+      # 4.5's probe, saved through the record editor into the root page's
+      # title and the seeded content element's bodytext. ø and ö are inside
+      # latin1; ő and the Japanese are not.
       CHARSET_PROBE: 'Skaarhøj · Gödöllő · 日本語'
-      # The title the job saves through the record editor, so the frontend can
-      # show a value DataHandler wrote rather than one provision.php did.
-      CHARSET_PROBE_SAVED: 'Skaarhøj · Gödöllő · 日本語 · gespeichert'
+      # What 6.2/provision.php seeds as that bodytext.
+      SEEDED_TEXT: 'A text element, stored in tt_content and rendered by css_styled_content.'
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -1460,7 +1508,7 @@ jobs:
           for i in $(seq 1 90); do
             code=$(curl -sS --max-time 5 -o page.html -w '%{http_code}' "$BASE/" 2>/dev/null || true)
             seen="$seen $code"
-            if [ "$code" = 200 ] && grep -q '<h1>TYPO3 6.2.31</h1>' page.html; then
+            if [ "$code" = 200 ] && grep -qE '<h1[^>]*>TYPO3 6\.2\.31</h1>' page.html; then
               echo "frontend rendering the seeded page after ${i} attempt(s); statuses seen:$seen"
               exit 0
             fi
@@ -1484,7 +1532,8 @@ jobs:
           $COMPOSE logs web > web-install.log
           grep -E '\[(entrypoint|install|provision)\]' web-install.log
           grep -q 'installer finished after environmentAndFolders, databaseConnect, databaseSelect, databaseData, defaultConfiguration' web-install.log
-          grep -q 'UTF-8 round trip through pages.title: ok' web-install.log
+          grep -q 'tt_content.bodytext charset: utf8' web-install.log
+          grep -q 'created content element (uid 1)' web-install.log
 
       - name: Smoke test
         run: |
@@ -1496,14 +1545,12 @@ jobs:
           . .github/scripts/ci-assert.sh
 
           curl -fsS -A "$UA" -D fe.headers "$BASE/" -o fe.html
-          grep -q '<h1>TYPO3 6.2.31</h1>' fe.html
+          # The seeded content element, as css_styled_content renders it: its
+          # header in an <h1> and its bodytext in a paragraph.
+          grep -qE '<h1[^>]*>TYPO3 6\.2\.31</h1>' fe.html
+          grep -qF "<p class=\"bodytext\">${SEEDED_TEXT}</p>" fe.html
           grep -q 'Rendered by TypoScript on PHP 5.6.40' fe.html
           grep -q 'Page generated&nbsp;2017-04-18 12:00:00' fe.html
-          if ! grep -qF "<p id=\"charset-probe\">${CHARSET_PROBE}</p>" fe.html; then
-            echo "::error::the root page title did not survive as UTF-8"
-            grep -o '<p id="charset-probe">.*</p>' fe.html || true
-            exit 1
-          fi
           grep -qi '^content-type: text/html; *charset=utf-8' fe.headers
           refute_php_errors_in fe.html
 
@@ -1545,7 +1592,8 @@ jobs:
           echo "smoke test passed"
 
       # Logs in the way the form's JavaScript does, opens the backend, then opens
-      # and saves the seeded page. The 303 is asserted rather than followed:
+      # the seeded page and its content element and saves the probe into both.
+      # The 303 is asserted rather than followed:
       # plain HTTP must answer http:// here, and the TLS phase https://.
       - name: Backend login and record editing
         run: |
@@ -1564,17 +1612,19 @@ jobs:
           grep -qF '"siteUrl":"http:\/\/127.0.0.1:8062\/"' backend.html
           refute_php_errors_in backend.html
 
-          edit_url="$BASE/typo3/alt_doc.php?returnUrl=dummy.php&edit%5Bpages%5D%5B1%5D=edit"
+          # Both records in one form, as the editor opens them side by side.
+          edit_url="$BASE/typo3/alt_doc.php?returnUrl=dummy.php&edit%5Bpages%5D%5B1%5D=edit&edit%5Btt_content%5D%5B1%5D=edit"
           code=$(curl -sS -A "$UA" -b jar -o edit.html -w '%{http_code}' "$edit_url")
           if [ "$code" != 200 ]; then
             echo "::error::alt_doc.php answered $code, not 200"
             exit 1
           fi
-          if ! grep -qF "name=\"data[pages][1][title]\" value=\"${CHARSET_PROBE}\"" edit.html; then
-            echo "::error::alt_doc.php did not render the probe in the title field ($(wc -c < edit.html) bytes)"
+          if ! grep -qF 'name="data[pages][1][title]" value="TYPO3 6.2.31"' edit.html; then
+            echo "::error::alt_doc.php did not render the seeded title in the title field ($(wc -c < edit.html) bytes)"
             grep -o 'name="data\[pages\]\[1\]\[title\]"[^>]*' edit.html | head -3 || head -c 2000 edit.html
             exit 1
           fi
+          python3 -I .github/scripts/ci-bodytext-field.py edit.html "$SEEDED_TEXT"
           refute_php_errors_in edit.html
 
           # Saving, as the form does: doSave, the form's own editRecord token
@@ -1583,32 +1633,43 @@ jobs:
           token=$(grep -oE 'name="formToken" value="[0-9a-f]+"' edit.html | head -1 | grep -oE '[0-9a-f]{20,}')
           test -n "$token"
           code=$(curl -sS -A "$UA" -b jar -e "$edit_url" -o saved.html -w '%{http_code}' \
-            --data-urlencode "data[pages][1][title]=${CHARSET_PROBE_SAVED}" \
+            --data-urlencode "data[pages][1][title]=${CHARSET_PROBE}" \
+            --data-urlencode "data[tt_content][1][bodytext]=${CHARSET_PROBE}" \
             -d doSave=1 -d "formToken=$token" "$edit_url")
           if [ "$code" != 200 ]; then
             echo "::error::saving through alt_doc.php answered $code, not 200"
             exit 1
           fi
-          grep -qF "name=\"data[pages][1][title]\" value=\"${CHARSET_PROBE_SAVED}\"" saved.html
+          grep -qF "name=\"data[pages][1][title]\" value=\"${CHARSET_PROBE}\"" saved.html
+          python3 -I .github/scripts/ci-bodytext-field.py saved.html "$CHARSET_PROBE"
           refute_php_errors_in saved.html
 
           # What DataHandler wrote, read from MySQL itself: UTF-8 bytes, so C3B8
           # for the ø, and three bytes for each kanji.
-          expected=$(python3 -I -c 'import os, sys; print(os.fsencode(sys.argv[1]).hex().upper())' "$CHARSET_PROBE_SAVED")
-          stored=$($COMPOSE exec -T db mysql -utypo3 -ptypo3 -N -B -e 'SELECT HEX(title) FROM pages WHERE uid = 1' typo3)
-          if [ "$stored" != "$expected" ]; then
-            echo "::error::pages.title holds 0x$stored, expected 0x$expected"
+          expected=$(python3 -I -c 'import os, sys; print(os.fsencode(sys.argv[1]).hex().upper())' "$CHARSET_PROBE")
+          for column in pages.title tt_content.bodytext; do
+            stored=$($COMPOSE exec -T db mysql -utypo3 -ptypo3 -N -B \
+              -e "SELECT HEX(${column#*.}) FROM ${column%.*} WHERE uid = 1" typo3)
+            if [ "$stored" != "$expected" ]; then
+              echo "::error::$column holds 0x$stored, expected 0x$expected"
+              exit 1
+            fi
+          done
+
+          # And back out through css_styled_content. no_cache, because the
+          # question is what the database now holds.
+          curl -fsS -A "$UA" "$BASE/?no_cache=1" -o fe-saved.html
+          if ! grep -qF "<p class=\"bodytext\">${CHARSET_PROBE}</p>" fe-saved.html; then
+            echo "::error::the bodytext did not survive as UTF-8"
+            grep -o '<p class="bodytext">.*</p>' fe-saved.html || true
             exit 1
           fi
-
-          curl -fsS -A "$UA" "$BASE/?no_cache=1" -o fe-saved.html
-          grep -qF "<p id=\"charset-probe\">${CHARSET_PROBE_SAVED}</p>" fe-saved.html
           refute_php_errors_in fe-saved.html
           echo "backend login and record editing passed"
 
       # 4.5's Ext.Direct step and its three-phase control, unchanged in shape:
       #
-      #   1. as shipped: the page tree answers, as JSON, with the seeded page
+      #   1. as shipped: the page tree answers, as JSON, with the page renamed above
       #   2. every display setting on over the shipped ini: still clean
       #   3. only always_populate_raw_post_data = 0 changed: the deprecation leads
       #      the reply, the JSON stops parsing, and PHP's own headers are lost
@@ -1630,7 +1691,7 @@ jobs:
 
           code=$(call_page_tree tree.json)
           test "$code" = 200 || { echo "::error::ajax.php answered $code"; head -c 1000 tree.json; exit 1; }
-          python3 -I 6.2/ci-check-page-tree.py tree.json "$CHARSET_PROBE_SAVED"
+          python3 -I 6.2/ci-check-page-tree.py tree.json "$CHARSET_PROBE"
           refute_php_errors_in tree.json
 
           apply_control() {
@@ -1655,7 +1716,7 @@ jobs:
           call_page_tree tree-displayed.json > /dev/null
           served_with_expose_php tree-displayed.json Off
           refute_in tree-displayed.json -F "$RAW_POST_DEPRECATION"
-          python3 -I 6.2/ci-check-page-tree.py tree-displayed.json "$CHARSET_PROBE_SAVED"
+          python3 -I 6.2/ci-check-page-tree.py tree-displayed.json "$CHARSET_PROBE"
           echo "with every display on and the shipped -1, the reply is clean"
 
           apply_control On 'always_populate_raw_post_data = 0'
@@ -1678,10 +1739,10 @@ jobs:
           $COMPOSE exec -T web sh -c 'rm /usr/local/etc/php/conf.d/zzz-ci-control.ini && apache2ctl -k graceful'
           for i in $(seq 1 30); do
             call_page_tree tree-restored.json > /dev/null || true
-            python3 -I 6.2/ci-check-page-tree.py tree-restored.json "$CHARSET_PROBE_SAVED" > /dev/null 2>&1 && break
+            python3 -I 6.2/ci-check-page-tree.py tree-restored.json "$CHARSET_PROBE" > /dev/null 2>&1 && break
             sleep 1
           done
-          python3 -I 6.2/ci-check-page-tree.py tree-restored.json "$CHARSET_PROBE_SAVED"
+          python3 -I 6.2/ci-check-page-tree.py tree-restored.json "$CHARSET_PROBE"
           echo "Ext.Direct passed"
 
       # 4.5's TLS phase. web and edge are recreated with HTTPS=on; typo3conf/ is
@@ -1723,7 +1784,7 @@ jobs:
           refute_in web-tls.log 'starting apache in the background for the installer'
 
           curl -fsS -A "$UA" "$BASE/" -o fe-tls.html
-          grep -q '<h1>TYPO3 6.2.31</h1>' fe-tls.html
+          grep -qE '<h1[^>]*>TYPO3 6\.2\.31</h1>' fe-tls.html
           refute_php_errors_in fe-tls.html
 
           location=$(curl -sS -A "$UA" -o /dev/null -D - "$BASE/typo3/backend.php" \

@@ -4,11 +4,11 @@
 // with 4.5/ci-login.sh, 4.5/ci-extdirect.sh and 4.5/ci-check-page-tree.py
 // (stack.cjs says how):
 //
-//   4.5/provision.php, unchanged, builds the schema, seeds the site and
-//   checks its UTF-8 round trip, against the shim answering as MySQL 5.5
-//   with --character-set-server=utf8
-//   the frontend renders the seeded page through TypoScript, as UTF-8, on
-//   the PHP its Docker stack runs, with the charset probe byte for byte
+//   4.5/provision.php, unchanged, builds the schema and seeds the site, a
+//   root page with a content element, against the shim answering as MySQL
+//   5.5 with --character-set-server=utf8
+//   the frontend renders the content element through css_styled_content, as
+//   UTF-8, on the PHP its Docker stack runs
 //   the backend serves its login form, and the Install Tool its password
 //   form, opened by typo3conf/ENABLE_INSTALL_TOOL alone
 //   source files and the deprecation log answer 403, and t3lib/ lists nothing
@@ -17,8 +17,9 @@
 //   the login works as 4.5.40's own form computes it, and opens backend.php,
 //   the ExtJS viewport
 //   a client with no cookie gets a session of its own
-//   the record editor shows the probe's UTF-8 bytes, and saves new ones,
-//   which MySQL stores and the frontend shows, byte for byte
+//   the record editor saves the charset probe into the page's title and the
+//   content element's bodytext as UTF-8 bytes, which MySQL stores and the
+//   editor and the frontend show, byte for byte
 //   the page tree answers over Ext.Direct, as JSON, with the saved title
 //   always_populate_raw_post_data = -1 keeps PHP 5.6's raw-POST deprecation
 //   out of that JSON, and 0 puts it in front of it, as in the job
@@ -38,10 +39,11 @@
 'use strict';
 
 const {
-  check, finish, client, browser, router, logIn, saveTitle, upload, UPLOADED, visibleText, runScript,
+  check, finish, client, browser, router, logIn, saveTitle, saveBodytext, upload, UPLOADED, visibleText, runScript,
   printProvisionOutput, assertNoPhpErrors, watchRejectedStatements, checkNothingRejected, checkClock,
   checkSecondProvision, checkSourceProtection, checkRestore, checkFreshSessions, checkUploadRestored,
-  callPageTree, assertPageTree, checkRawPostControl, utf8Bytes, titleField, USER_AGENT, EDIT_ROOT_PAGE,
+  callPageTree, assertPageTree, checkRawPostControl, utf8Bytes, titleField, bodytextField, bodytextRendered,
+  USER_AGENT, EDIT_ROOT_PAGE, EDIT_CONTENT_ELEMENT, SEEDED_TEXT,
 } = require('./stack.cjs');
 const assert = require('assert');
 const path = require('path');
@@ -50,11 +52,11 @@ const { bootRelease } = require('./release-site.cjs');
 
 const workRoot = path.resolve(process.argv[2]);
 
-// The job's CHARSET_PROBE: what a visitor should read in <p id="charset-probe">.
+// The job's CHARSET_PROBE: what it saves through the record editor into the
+// page's title and the content element's bodytext.
 const CHARSET_PROBE = 'Skaarhøj · Gödöllő · 日本語';
-// The title the record editor saves, so that the frontend and the page tree
-// show a value TCEmain wrote, not one provision.php did.
-const CHARSET_PROBE_SAVED = 'Skaarhøj · Gödöllő · 日本語 · gespeichert';
+// The content element's header, as css_styled_content renders it.
+const SEEDED_HEADING = /<h1[^>]*>TYPO3 4\.5\.40<\/h1>/;
 const urlEncoded = fields => fields.map(([name, value]) => `${encodeURIComponent(name)}=${encodeURIComponent(value)}`).join('&');
 
 (async () => {
@@ -66,9 +68,10 @@ const urlEncoded = fields => fields.map(([name, value]) => `${encodeURIComponent
   const booted = Date.now() - started;
   const get = client(site);
   const rejected = watchRejectedStatements(site);
-  // What the frontend's probe must say: the root page's title, which the
+  // The root page's title and the content element's bodytext, which the
   // record editor changes below.
-  let probeText = CHARSET_PROBE;
+  let title = 'TYPO3 4.5.40';
+  let bodytext = SEEDED_TEXT;
 
   // The counts provision.php prints against the shim as MySQL 5.5.62 with utf8.
   check('4.5/provision.php, unchanged, builds the schema and seeds the site, as MySQL 5.5 with utf8 answers it', () => {
@@ -87,13 +90,12 @@ const urlEncoded = fields => fields.map(([name, value]) => `${encodeURIComponent
     assert.match(output, /\[provision\] imported 119 statements from sysext\/tsconfig_help\/ext_tables_static\+adt\.sql/);
     assert.match(output, /\[provision\] created backend admin "admin"/);
     assert.match(output, /\[provision\] created root page \(uid 1\)/);
+    assert.match(output, /\[provision\] created content element \(uid 1\)/);
+    for (const column of ['pages.title', 'tt_content.header', 'tt_content.bodytext']) {
+      assert.ok(output.includes(`[provision] ${column} charset: utf8\n`), `${column} is not utf8`);
+    }
     assert.match(output, /\[provision\] created root TypoScript template/);
     assert.match(output, /\[provision\] done\n$/);
-  });
-
-  check("provisioning's UTF-8 round trip through pages.title passes", () => {
-    assert.match(site.provisionOutput, /\[provision\] pages\.title charset: utf8\n/);
-    assert.match(site.provisionOutput, /\[provision\] UTF-8 round trip through pages\.title: ok\n/);
   });
 
   checkClock(site);
@@ -103,27 +105,27 @@ const urlEncoded = fields => fields.map(([name, value]) => `${encodeURIComponent
     const started = Date.now();
     const response = get('index.php');
     const elapsed = Date.now() - started;
-    if (!response.text.includes('<h1>TYPO3 4.5.40</h1>')) {
+    if (!SEEDED_HEADING.test(response.text)) {
       console.log(`     ${response.status}, ${response.body.length} bytes, log: ${response.log.join(' | ')}`);
       console.log(response.text.slice(0, 1500));
     }
     console.log(`     ${response.status}, ${response.body.length} bytes in ${elapsed} ms`);
     assert.strictEqual(response.status, 200);
-    assert.ok(response.text.includes('<h1>TYPO3 4.5.40</h1>'), 'the seeded heading is missing');
+    assert.match(response.text, SEEDED_HEADING, 'the seeded heading is missing');
     // The PHP of the Docker job, which runs the same version.
     assert.match(response.text, /Rendered by TypoScript on PHP 5\.6\.40/);
     // The job asserts 12:00:00, under its frozen clock. Here the clock runs
     // from noon.
     assert.match(response.text, /Page generated&nbsp;2015-02-19 12:[0-9]{2}:[0-9]{2}/);
-    // Compared as bytes: written by provision.php, stored by the shim as
-    // utf8, read back by t3lib_db and rendered by TypoScript.
-    const probe = (response.text.match(/<p id="charset-probe">(.*?)<\/p>/s) || [])[1];
-    assert.strictEqual(probe, utf8Bytes(probeText), 'the charset probe is not the UTF-8 bytes stored for the title');
+    // Compared as bytes: written by provision.php or TCEmain, stored by the
+    // shim as utf8, read back by t3lib_db and rendered by css_styled_content.
+    assert.strictEqual(bodytextRendered(response), utf8Bytes(bodytext), 'the bodytext is not the UTF-8 bytes stored for it');
+    assert.ok(response.text.includes(`<title>${utf8Bytes(title)}</title>`), 'the page title is not the UTF-8 bytes stored for it');
     assert.match(response.header('Content-Type'), /^text\/html; *charset=utf-8$/i);
     assertNoPhpErrors(response);
   });
 
-  frontendChecks('the frontend renders the seeded page through TypoScript, as UTF-8', get);
+  frontendChecks('the frontend renders the seeded content element through css_styled_content, as UTF-8', get);
 
   check('the backend serves its login form, with a challenge', () => {
     const response = get('typo3/index.php');
@@ -184,33 +186,49 @@ const urlEncoded = fields => fields.map(([name, value]) => `${encodeURIComponent
     assertNoPhpErrors(response);
   });
 
-  // The probe through TCEforms, as UTF-8: the job greps for it in alt_doc.php.
+  // The job opens both records in one form and posts only the two fields. This
+  // posts each whole form back, as a browser does on a UTF-8 page, with text
+  // outside latin1.
   let editor = null;
-  check("alt_doc.php shows the root page's title as its UTF-8 bytes", () => {
+  check("alt_doc.php shows the root page's title", () => {
     editor = admin('typo3/alt_doc.php', { query: EDIT_ROOT_PAGE });
     assert.strictEqual(editor.status, 200);
     assert.match(editor.header('Content-Type'), /^text\/html; *charset=utf-8$/i);
-    assert.strictEqual(titleField(editor), utf8Bytes(CHARSET_PROBE));
+    assert.strictEqual(titleField(editor), title);
     assertNoPhpErrors(editor);
   });
-
-  // Not in the job, which stops at the form: the whole form posted back, as a
-  // browser does on a UTF-8 page, with a title outside latin1.
   check('saving a UTF-8 title stores its bytes, and the form and the frontend show them', () => {
-    const response = saveTitle(admin, editor, utf8Bytes(CHARSET_PROBE_SAVED));
+    const response = saveTitle(admin, editor, utf8Bytes(CHARSET_PROBE));
     assert.strictEqual(response.status, 200);
-    assert.strictEqual(titleField(response), utf8Bytes(CHARSET_PROBE_SAVED));
+    assert.strictEqual(titleField(response), utf8Bytes(CHARSET_PROBE));
     assertNoPhpErrors(response);
     // What TCEmain wrote, through the shim's HEX(): UTF-8, so C3B8 for the ø.
     assert.deepStrictEqual(site.query('SELECT HEX(title) FROM pages WHERE uid = 1').rows,
-      [[Buffer.from(CHARSET_PROBE_SAVED, 'utf8').toString('hex').toUpperCase()]]);
+      [[Buffer.from(CHARSET_PROBE, 'utf8').toString('hex').toUpperCase()]]);
+    title = CHARSET_PROBE;
+  });
+
+  let contentEditor = null;
+  check("alt_doc.php shows the content element's bodytext", () => {
+    contentEditor = admin('typo3/alt_doc.php', { query: EDIT_CONTENT_ELEMENT });
+    assert.strictEqual(contentEditor.status, 200);
+    assert.strictEqual(bodytextField(contentEditor), SEEDED_TEXT);
+    assertNoPhpErrors(contentEditor);
+  });
+  check('saving a UTF-8 bodytext stores its bytes, and the form and the frontend show them', () => {
+    const response = saveBodytext(admin, contentEditor, utf8Bytes(CHARSET_PROBE));
+    assert.strictEqual(response.status, 200);
+    assert.strictEqual(bodytextField(response), utf8Bytes(CHARSET_PROBE));
+    assertNoPhpErrors(response);
+    assert.deepStrictEqual(site.query('SELECT HEX(bodytext) FROM tt_content WHERE uid = 1').rows,
+      [[Buffer.from(CHARSET_PROBE, 'utf8').toString('hex').toUpperCase()]]);
     const frontend = get('index.php', { query: 'no_cache=1' });
-    assert.ok(frontend.text.includes(`<p id="charset-probe">${utf8Bytes(CHARSET_PROBE_SAVED)}</p>`), 'the frontend does not show the saved title');
+    assert.strictEqual(bodytextRendered(frontend), utf8Bytes(CHARSET_PROBE), 'the frontend does not show the saved bodytext');
     assertNoPhpErrors(frontend);
-    probeText = CHARSET_PROBE_SAVED;
+    bodytext = CHARSET_PROBE;
   });
   // And without no_cache: TCEmain cleared the page's cache.
-  frontendChecks('the frontend renders the saved title through TypoScript', get);
+  frontendChecks('the frontend renders the saved title and bodytext', get);
 
   // --- the job's "Ext.Direct, and PHP 5.6's raw-POST deprecation" step -----
 
@@ -218,12 +236,12 @@ const urlEncoded = fields => fields.map(([name, value]) => `${encodeURIComponent
     const response = callPageTree(admin, extDirectToken);
     assert.strictEqual(response.status, 200);
     assert.match(response.header('Content-Type'), /^application\/json; *charset=utf-8$/i);
-    assertPageTree(response, 'TYPO3 4.5.40', probeText);
+    assertPageTree(response, 'TYPO3 4.5.40', title);
     assertNoPhpErrors(response);
   });
 
   // The job's phases 2 and 3.
-  await checkRawPostControl(site, workRoot, `be_typo_user=${admin.cookie('be_typo_user')}`, extDirectToken, 'TYPO3 4.5.40', probeText);
+  await checkRawPostControl(site, workRoot, `be_typo_user=${admin.cookie('be_typo_user')}`, extDirectToken, 'TYPO3 4.5.40', title);
 
   // --- the job's "Behind TLS" step --------------------------------------
 
@@ -239,7 +257,7 @@ const urlEncoded = fields => fields.map(([name, value]) => `${encodeURIComponent
   check('over HTTPS, the frontend renders the page, and the backend its login form', () => {
     const frontend = secure('');
     assert.strictEqual(frontend.status, 200);
-    assert.ok(frontend.text.includes('<h1>TYPO3 4.5.40</h1>'), 'the seeded heading is missing');
+    assert.match(frontend.text, SEEDED_HEADING, 'the seeded heading is missing');
     assertNoPhpErrors(frontend);
     const form = secure('typo3/index.php');
     assert.match(form.text, /name="userident"/);
