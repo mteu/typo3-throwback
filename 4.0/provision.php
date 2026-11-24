@@ -379,8 +379,9 @@ mysql_query($sql, $link) or fail('creating root page: ' . mysql_error($link));
 $rootPageUid = mysql_insert_id($link);
 out('created root page (uid ' . $rootPageUid . ')');
 
-$sql = "INSERT INTO tt_content (pid, tstamp, crdate, sorting, CType, header, bodytext, colPos, hidden, deleted)"
-     . " VALUES (" . $rootPageUid . ", " . $now . ", " . $now . ", 256, 'text', '"
+// No crdate: 4.0's tt_content has none (typo3/sysext/cms/ext_tables.sql)
+$sql = "INSERT INTO tt_content (pid, tstamp, sorting, CType, header, bodytext, colPos, hidden, deleted)"
+     . " VALUES (" . $rootPageUid . ", " . $now . ", 256, 'text', '"
      . mysql_real_escape_string($siteName, $link) . "', '"
      . mysql_real_escape_string($welcomeText, $link) . "', 0, 0, 0)";
 mysql_query($sql, $link) or fail('creating content element: ' . mysql_error($link));
