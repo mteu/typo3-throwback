@@ -180,9 +180,12 @@ async function checkInstallerRelease() {
 
   // The backend gets furthest: with no session cookie it renders the whole
   // login page, and its first query is for the system news below the form.
+  // Unless the session garbage collection comes first: starting the backend
+  // user runs it when rand() % 100 <= gc_probability, which is 1, so in about
+  // 2 requests in 100 (AbstractUserAuthentication.php:190, :517).
   for (const [label, urlPath, thrownBy] of [
     ['frontend', '/index.php', /DatabaseConnection :: connectDB/],
-    ['backend', '/typo3/index.php', /LoginController :: makeLoginNews/],
+    ['backend', '/typo3/index.php', /LoginController :: makeLoginNews|AbstractUserAuthentication :: gc \(\)/],
   ]) {
     check(`${label}: ${urlPath} then runs to its first query and renders 6.2's own error`, () => {
       const response = request(urlPath);
