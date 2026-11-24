@@ -5,7 +5,7 @@
 //   names, so that two interpreters can run on one origin: the Web Lock is
 //   per release
 //   each keeps its own snapshot, in an IndexedDB database of its own
-//   "Reset site" in the newest provisions it afresh, and leaves every other
+//   "Reset" in the newest provisions it afresh, and leaves every other
 //   release's tab and saved site alone
 //
 // Usage: node two-sites.cjs <site-root> <release>..., the directory
@@ -114,7 +114,7 @@ const savedDatabase = (shell, release) => shell.evaluate(async name => {
       assert.strictEqual(new Set(saved.values()).size, releases.length, 'two releases share a snapshot');
     });
 
-    await check(`"Reset site" in ${dirOf(newest)} provisions it afresh, and leaves ${others.map(dirOf).join(' and ')} alone, tabs and saved sites`, async () => {
+    await check(`"Reset" in ${dirOf(newest)} provisions it afresh, and leaves ${others.map(dirOf).join(' and ')} alone, tabs and saved sites`, async () => {
       for (const release of others) {
         await shells.get(release).evaluate(() => {
           window.notReloaded = true;

@@ -16,6 +16,8 @@
 //   a module throws no JavaScript error, but those the release throws in any
 //   browser (spec.moduleErrors)
 //   the page title is renamed in alt_doc.php, and the frontend shows it
+//   the reload button loads the page the frame shows again, without its
+//   fragment
 //   a file uploaded through the backend's form lands in fileadmin/ byte for
 //   byte, and a .php upload is refused
 //   the backend stays logged in when the shell tab that runs PHP reloads
@@ -25,7 +27,7 @@
 //   a tab showing LICENSES.txt does not stall the relay
 //   when the tab that runs PHP closes, the second takes over, rename included
 //   a reload restores the site from IndexedDB, rename and upload included
-//   "Reset site", clicked in a tab that does not run PHP, provisions a fresh
+//   "Reset", clicked in a tab that does not run PHP, provisions a fresh
 //   one and reloads both tabs
 //   a shell cached from before a deploy, which names a worker that is gone,
 //   says so instead of hanging
@@ -431,6 +433,31 @@ async function check(label, test) {
       spec.assertFrontend(await frontend(), RENAMED);
     });
 
+    await check('the reload button loads the page the frame shows again, not the start page', async () => {
+      await page.evaluate(() => {
+        document.getElementById('site').src = 'site/index.php?id=1#top';
+      });
+      await page.waitForFunction(() => {
+        const win = document.getElementById('site').contentWindow;
+        return win.document.readyState === 'complete' && /\/site\/index\.php$/.test(win.location.pathname) && win.location.hash === '#top';
+      }, null, { timeout: 30000 });
+      await page.evaluate(() => {
+        document.getElementById('site').contentWindow.staleFrontend = true;
+      });
+      await page.click('#reload');
+      await page.waitForFunction(() => {
+        const win = document.getElementById('site').contentWindow;
+        return !win.staleFrontend && win.document.readyState === 'complete' && win.document.body;
+      }, null, { timeout: 30000 });
+      const shown = await page.evaluate(() => {
+        const { pathname, search, hash } = document.getElementById('site').contentWindow.location;
+        return { pathname: pathname.replace(/^.*\/site\//, '/'), search, hash };
+      });
+      assert.deepStrictEqual(shown, { pathname: '/index.php', search: '?id=1', hash: '' });
+      assert.strictEqual(await page.locator('#address').textContent(), '/index.php?id=1');
+      spec.assertFrontend(await frame().content(), RENAMED);
+    });
+
     for (const [label, test] of spec.backendChecks) {
       await check(label, () => test(probe));
     }
@@ -548,7 +575,7 @@ async function check(label, test) {
       assert.deepStrictEqual(await servedUpload(), { status: 200, length: UPLOAD_BYTES.length, sha256: UPLOAD_SHA256 });
     });
 
-    await check('"Reset site", clicked in a tab that does not run PHP, provisions a fresh site and reloads both', async () => {
+    await check('"Reset", clicked in a tab that does not run PHP, provisions a fresh site and reloads both', async () => {
       const follower = await context.newPage();
       await follower.goto(`${base}/index.html`);
       assert.match((await boot(follower)).text, /PHP runs in another tab/);
