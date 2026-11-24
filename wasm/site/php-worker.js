@@ -201,11 +201,14 @@ function saveNow() {
   saving = saveSnapshot(site.snapshot()).catch(error => progress(`could not save: ${error}`));
 }
 
+// At most SAVE_DELAY_MS after the first unsaved change, however many follow.
+// Restarting the delay on every write would put the save off for as long as
+// requests keep coming, and a backend loads dozens right after its login: a
+// reload in that burst would restore a site without the login.
 function scheduleSave() {
-  if (resetting) {
+  if (resetting || saveTimer !== null) {
     return;
   }
-  clearTimeout(saveTimer);
   saveTimer = setTimeout(saveNow, SAVE_DELAY_MS);
 }
 

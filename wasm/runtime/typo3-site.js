@@ -53,9 +53,24 @@
     return text;
   }
 
+  // The browser never sees these cookies (see sw.js), so this jar is the
+  // visitor's only copy. It goes into the snapshot with the database: a
+  // backend session row without the cookie that names it logs the visitor
+  // out when the shell tab reloads and the PHP worker restarts.
   class CookieJar {
-    constructor() {
+    // cookies: what entries() returned, from a snapshot, or none.
+    constructor(cookies = []) {
       this.cookies = new Map();
+      this.changes = 0;
+      for (const { name, value, path } of cookies) {
+        if (typeof name === 'string' && typeof value === 'string' && typeof path === 'string') {
+          this.cookies.set(`${name};${path}`, { name, value, path });
+        }
+      }
+    }
+
+    entries() {
+      return [...this.cookies.values()].map(({ name, value, path }) => ({ name, value, path }));
     }
 
     // Set-Cookie as PHP 4's setcookie() writes it.
@@ -78,10 +93,15 @@
         }
       }
       const key = `${name};${path}`;
+      const kept = this.cookies.get(key);
       if (value === 'deleted' || value === '' || (expires !== null && !Number.isNaN(expires) && expires < Date.now())) {
-        this.cookies.delete(key);
-      } else {
+        if (kept) {
+          this.cookies.delete(key);
+          this.changes++;
+        }
+      } else if (!kept || kept.value !== value) {
         this.cookies.set(key, { name, value, path });
+        this.changes++;
       }
     }
 
@@ -136,6 +156,7 @@
       this.cookies = new CookieJar();
       this.mysql = null;
       this.savedWrites = 0;
+      this.savedCookieChanges = 0;
       this.restored = false;
     }
 
@@ -185,6 +206,9 @@
           FS.mkdirTree(`${this.docroot}/${path}`.replace(/\/[^/]*$/, ''));
           FS.writeFile(`${this.docroot}/${path}`, bytes);
         }
+        // A snapshot saved before the jar was part of it has no cookies:
+        // the visitor logs in once more, and nothing else is lost.
+        this.cookies = new CookieJar(Array.isArray(snapshot.cookies) ? snapshot.cookies : []);
         this.restored = true;
         this.progress('restored the database and files from the last visit', 1);
       } else if (database) {
@@ -385,9 +409,11 @@
       return { status: response.status, headers: out, body: response.body, log: response.log };
     }
 
-    // True when the database changed since the last snapshot.
+    // True when the database or the cookie jar changed since the last
+    // snapshot.
     get changed() {
-      return this.mysql !== null && this.mysql.writes !== this.savedWrites;
+      return this.mysql !== null
+        && (this.mysql.writes !== this.savedWrites || this.cookies.changes !== this.savedCookieChanges);
     }
 
     snapshot() {
@@ -411,7 +437,13 @@
         walk(directory);
       }
       this.savedWrites = this.mysql.writes;
-      return { version: this.release.snapshotVersion, database: this.mysql.exportDatabase('typo3'), files };
+      this.savedCookieChanges = this.cookies.changes;
+      return {
+        version: this.release.snapshotVersion,
+        database: this.mysql.exportDatabase('typo3'),
+        files,
+        cookies: this.cookies.entries(),
+      };
     }
   }
 

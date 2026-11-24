@@ -18,6 +18,7 @@
 //   the page title is renamed in alt_doc.php, and the frontend shows it
 //   a file uploaded through the backend's form lands in fileadmin/ byte for
 //   byte, and a .php upload is refused
+//   the backend stays logged in when the shell tab that runs PHP reloads
 //   no page, frame or tab throws a JavaScript error along the way, and
 //   sw.js's Content-Security-Policy blocks nothing the release does
 //   a second shell tab runs no PHP of its own: it uses the first tab's, and
@@ -456,6 +457,24 @@ async function check(label, test) {
 
       const served = await servedUpload();
       assert.deepStrictEqual(served, { status: 200, length: UPLOAD_BYTES.length, sha256: UPLOAD_SHA256 });
+    });
+
+    await check('the backend stays logged in when the shell tab reloads', async () => {
+      // The backend's own page, which a visitor who is logged out does not
+      // get: 6.2 sends them to the login form, 3.3.0 answers "Login-error".
+      const loggedIn = () => backend.evaluate(async backendPage => {
+        const response = await fetch(backendPage);
+        const text = await response.text();
+        return !/\/index\.php$/.test(new URL(response.url).pathname)
+          && !/name="p_field"/.test(text) && !/No user logged in/.test(text);
+      }, spec.backend.page);
+      assert.ok(await loggedIn(), 'not logged in before the reload');
+      // A visitor may reload as soon as the backend shows. A save that waits
+      // for the backend's requests to stop would come later than this.
+      await page.waitForTimeout(1000);
+      await page.reload();
+      assert.match((await boot()).text, /Restored from your last visit/);
+      assert.ok(await loggedIn(), 'the reload logged the backend out');
     });
 
     await check('the shell turns the backend away from its iframe', async () => {

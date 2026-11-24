@@ -53,12 +53,13 @@ what the page hands it.
 - **A service worker carries each request to PHP.** Your browser asks for a
   page as usual. The service worker hands the request to PHP, running in a
   worker of your tab, and returns its answer.
-- **Your site is saved in your browser.** After each change, the site's files and
-  database are stored in the browser's own storage, and a reload carries on
-  from there. "Reset site" throws it away and starts fresh.
+- **Your site is saved in your browser.** After each change, the site's files,
+  database and cookies are stored in the browser's own storage, and a reload
+  carries on from there. A backend login stays logged in. "Reset site" throws
+  it away and starts fresh.
 - **One PHP for the whole browser.** Open the site in a second tab, and that tab
   uses the first tab's PHP. Close the first, and another tab takes over from
-  the saved site. A backend login does not survive that hand-over.
+  the saved site, backend login included.
 - **The clock is set back.** It starts at noon on the release day, UTC, and
   runs from there, as in the Docker stacks.
 
