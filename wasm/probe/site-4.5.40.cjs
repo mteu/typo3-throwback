@@ -5,24 +5,24 @@
 const assert = require('assert');
 const { viewport, viewportChecks } = require('./site-viewport.cjs');
 
-// The job's CHARSET_PROBE, which 4.5/provision.php seeds as the root page's
-// title, as UTF-8.
-const CHARSET_PROBE = 'Skaarhøj · Gödöllő · 日本語';
+// What the provision script seeds as the content element's bodytext.
+const SEEDED_TEXT = 'A text element, stored in tt_content and rendered by css_styled_content.';
+
 // Typed into the editor of a UTF-8 page: the ő and the kanji are outside
 // latin1, which 4.0.13's ISO-8859-1 backend could only store as references.
 const RENAMED = 'Renamed in a 2015 backend, Gödöllő 日本語';
 
 module.exports = {
-  title: CHARSET_PROBE,
+  title: 'TYPO3 4.5.40',
   day: '2015-02-19',
   renamed: RENAMED,
-  // 4.5/provision.php's template renders the release in an <h1>, and the
-  // page title in <p id="charset-probe">, as TypoScript reads it back from
-  // the database.
+  // The seeded content element, as css_styled_content renders it: its header
+  // in an <h1> and its bodytext in a paragraph. The page title, which the
+  // backend renames, is the <title>, as for 3.8.1.
   assertFrontend(html, title) {
-    assert.ok(html.includes('<h1>TYPO3 4.5.40</h1>'), 'the seeded heading is missing');
-    const probe = (html.match(/<p id="charset-probe">(.*?)<\/p>/s) || [])[1];
-    assert.strictEqual(probe, title, `the charset probe is not "${title}"`);
+    assert.match(html, /<h1[^>]*>TYPO3 4\.5\.40<\/h1>/, 'the seeded heading is missing');
+    assert.ok(html.includes(`<p class="bodytext">${SEEDED_TEXT}</p>`), 'the seeded bodytext is missing');
+    assert.ok(html.includes(`<title>${title}</title>`), `the page title is not "${title}"`);
   },
   // The seeded page is text only.
   frontendImages: [],

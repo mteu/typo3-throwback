@@ -9,13 +9,13 @@
 //   6.2/provision.php preflight, unchanged, finds a utf8 server and an empty
 //   database; runtime/step-installer.js, the twin of 6.2/install.php, walks
 //   the installer's five steps; 6.2/provision.php seed, unchanged, seeds the
-//   site and checks its UTF-8 round trip
+//   site, a root page with a content element
 //   every line they log is the job's, but the client version mysqli reports
 //   the installer's environment check says what it says in Docker, word for
 //   word, and nothing more
 //   the installer creates the tables it creates in Docker
-//   the frontend renders the seeded page through TypoScript, as UTF-8, on
-//   the PHP its Docker stack runs, with the charset probe byte for byte
+//   the frontend renders the content element through css_styled_content, as
+//   UTF-8, on the PHP its Docker stack runs
 //   the backend serves rsaauth's login form, and the Install Tool its
 //   password form, opened by typo3conf/ENABLE_INSTALL_TOOL alone
 //   configuration, logs and source files answer 403
@@ -26,8 +26,9 @@
 //   in PHP and a password Node encrypts, and opens backend.php
 //   cookieless requests get sessions of their own, and a request with the
 //   cookie finds its session through mysqli's prepared statements
-//   the record editor shows the probe's UTF-8 bytes, and saves new ones,
-//   which MySQL stores and the frontend shows, byte for byte
+//   the record editor saves the charset probe into the page's title and the
+//   content element's bodytext as UTF-8 bytes, which MySQL stores and the
+//   editor and the frontend show, byte for byte
 //   the page tree answers over Ext.Direct, as JSON, with the saved title
 //   always_populate_raw_post_data = -1 keeps PHP 5.6's raw-POST deprecation
 //   out of that JSON, and 0 puts it in front of it, as in the job
@@ -55,8 +56,9 @@
 
 const {
   check, finish, client, browser, router, printProvisionOutput, assertNoPhpErrors, checkClock, checkRestore, checkNothingRejected,
-  cookiesFrom, runScript, saveTitle, visibleText, utf8Bytes, titleField, callPageTree, assertPageTree, checkRawPostControl,
-  UPLOADED, checkUploadRestored, USER_AGENT, EDIT_ROOT_PAGE,
+  cookiesFrom, runScript, saveTitle, saveBodytext, visibleText, utf8Bytes, titleField, bodytextField, bodytextRendered,
+  callPageTree, assertPageTree, checkRawPostControl, UPLOADED, checkUploadRestored, USER_AGENT, EDIT_ROOT_PAGE,
+  EDIT_CONTENT_ELEMENT, SEEDED_TEXT,
 } = require('./stack.cjs');
 const assert = require('assert');
 const crypto = require('crypto');
@@ -67,13 +69,18 @@ const MysqlOnSqlite = require('../runtime/mysql-sqlite.js');
 
 const workRoot = path.resolve(process.argv[2]);
 
-// The job's CHARSET_PROBE: what a visitor should read in <p id="charset-probe">.
+// The job's CHARSET_PROBE: what it saves through the record editor into the
+// page's title and the content element's bodytext.
 const CHARSET_PROBE = 'Skaarhøj · Gödöllő · 日本語';
-// The job's CHARSET_PROBE_SAVED: the title the record editor saves, so that
-// the frontend and the page tree show a value DataHandler wrote, not one
-// provision.php did.
-const CHARSET_PROBE_SAVED = 'Skaarhøj · Gödöllő · 日本語 · gespeichert';
 const SITE_NAME = 'TYPO3 6.2.31';
+// The content element's header, as css_styled_content renders it.
+const SEEDED_HEADING = /<h1[^>]*>TYPO3 6\.2\.31<\/h1>/;
+// The bodytext the record editor shows, as bytes. The factory configuration
+// loads rtehtmlarea, whose hidden <textarea> carries the field transformed for
+// the editor: each line of plain text in a <p>.
+const shownBodytext = response => (bodytextField(response) || '')
+  .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&amp;/g, '&')
+  .replace(/^<p>([\s\S]*)<\/p>$/, '$1');
 // What the Install Tool renames the site to, as UTF-8.
 const RENAMED_SITE = 'TYPO3 6.2.31 · gespeichert';
 
@@ -203,9 +210,10 @@ function upload(admin, filename, content) {
   const get = client(site);
   const output = site.provisionOutput;
   const rejectedWhileProvisioning = rejected.splice(0);
-  // What the frontend's probe must say: the root page's title, which the
+  // The root page's title and the content element's bodytext, which the
   // record editor changes below.
-  let probeText = CHARSET_PROBE;
+  let title = SITE_NAME;
+  let bodytext = SEEDED_TEXT;
 
   // --- the job's "The installer's own record" -----------------------------
 
@@ -244,8 +252,10 @@ function upload(admin, filename, content) {
       ...preflight.slice(0, 3),
       '[provision] the installer created 60 tables, 18 of them for the caching framework',
       '[provision] created root page (uid 1)',
+      '[provision] created content element (uid 1)',
       '[provision] pages.title charset: utf8',
-      '[provision] UTF-8 round trip through pages.title: ok',
+      '[provision] tt_content.header charset: utf8',
+      '[provision] tt_content.bodytext charset: utf8',
       '[provision] created root TypoScript template',
       '[provision] done',
       '',
@@ -285,24 +295,26 @@ function upload(admin, filename, content) {
     const started = Date.now();
     const response = get('index.php');
     const elapsed = Date.now() - started;
-    if (!response.text.includes('<h1>TYPO3 6.2.31</h1>')) {
+    if (!SEEDED_HEADING.test(response.text)) {
       console.log(`     ${response.status}, ${response.body.length} bytes, log: ${response.log.join(' | ')}`);
       console.log(response.text.slice(0, 1500));
     }
     console.log(`     ${response.status}, ${response.body.length} bytes in ${elapsed} ms`);
     assert.strictEqual(response.status, 200);
-    assert.ok(response.text.includes('<h1>TYPO3 6.2.31</h1>'), 'the seeded heading is missing');
+    assert.match(response.text, SEEDED_HEADING, 'the seeded heading is missing');
     assert.match(response.text, /Rendered by TypoScript on PHP 5\.6\.40/);
     // The job asserts 12:00:00, under its frozen clock. Here the clock runs
     // from noon.
     assert.match(response.text, /Page generated&nbsp;2017-04-18 12:[0-9]{2}:[0-9]{2}/);
-    const probe = (response.text.match(/<p id="charset-probe">(.*?)<\/p>/s) || [])[1];
-    assert.strictEqual(probe, utf8Bytes(probeText), 'the charset probe is not the UTF-8 bytes stored for the title');
+    // Compared as bytes: written by provision.php or DataHandler, read back
+    // and rendered by css_styled_content.
+    assert.strictEqual(bodytextRendered(response), utf8Bytes(bodytext), 'the bodytext is not the UTF-8 bytes stored for it');
+    assert.ok(response.text.includes(`<title>${utf8Bytes(title)}</title>`), 'the page title is not the UTF-8 bytes stored for it');
     assert.match(response.header('Content-Type'), /^text\/html; *charset=utf-8$/i);
     assertNoPhpErrors(response);
   });
 
-  frontendChecks('the frontend renders the seeded page through TypoScript, as UTF-8', get);
+  frontendChecks('the frontend renders the seeded content element through css_styled_content, as UTF-8', get);
 
   check("the backend serves rsaauth's login form, which the installer's configuration selects", () => {
     const response = get('typo3/index.php');
@@ -411,36 +423,50 @@ function upload(admin, filename, content) {
     assertNoPhpErrors(response);
   });
 
-  // The probe through the record editor, as UTF-8: the job greps for it in
-  // alt_doc.php.
+  // The job opens both records in one form and posts the two fields, doSave
+  // and the form's token. This posts each whole form back, as a browser does
+  // on a UTF-8 page, with text outside latin1.
   let editor = null;
-  check("alt_doc.php shows the root page's title as its UTF-8 bytes", () => {
+  check("alt_doc.php shows the root page's title", () => {
     editor = admin('typo3/alt_doc.php', { query: EDIT_ROOT_PAGE });
     assert.strictEqual(editor.status, 200);
     assert.match(editor.header('Content-Type'), /^text\/html; *charset=utf-8$/i);
-    assert.strictEqual(titleField(editor), utf8Bytes(CHARSET_PROBE));
+    assert.strictEqual(titleField(editor), title);
     assertNoPhpErrors(editor);
   });
-
-  // The job posts the title, doSave and the form's token. This posts the
-  // whole form, as a browser does on a UTF-8 page, with a title outside
-  // latin1.
-  check('saving a UTF-8 title stores its bytes, and the form and the frontend show them', () => {
-    const response = saveTitle(admin, editor, utf8Bytes(CHARSET_PROBE_SAVED));
+  check('saving a UTF-8 title stores its bytes, and the form shows them', () => {
+    const response = saveTitle(admin, editor, utf8Bytes(CHARSET_PROBE));
     assert.strictEqual(response.status, 200);
-    assert.strictEqual(titleField(response), utf8Bytes(CHARSET_PROBE_SAVED));
+    assert.strictEqual(titleField(response), utf8Bytes(CHARSET_PROBE));
     assertNoPhpErrors(response);
     // What DataHandler wrote, through the shim's HEX(): UTF-8, so C3B8 for
     // the ø.
     assert.deepStrictEqual(site.query('SELECT HEX(title) FROM pages WHERE uid = 1').rows,
-      [[Buffer.from(CHARSET_PROBE_SAVED, 'utf8').toString('hex').toUpperCase()]]);
+      [[Buffer.from(CHARSET_PROBE, 'utf8').toString('hex').toUpperCase()]]);
+    title = CHARSET_PROBE;
+  });
+
+  let contentEditor = null;
+  check("alt_doc.php shows the content element's bodytext", () => {
+    contentEditor = admin('typo3/alt_doc.php', { query: EDIT_CONTENT_ELEMENT });
+    assert.strictEqual(contentEditor.status, 200);
+    assert.strictEqual(shownBodytext(contentEditor), SEEDED_TEXT);
+    assertNoPhpErrors(contentEditor);
+  });
+  check('saving a UTF-8 bodytext stores its bytes, and the form and the frontend show them', () => {
+    const response = saveBodytext(admin, contentEditor, utf8Bytes(CHARSET_PROBE));
+    assert.strictEqual(response.status, 200);
+    assert.strictEqual(shownBodytext(response), utf8Bytes(CHARSET_PROBE));
+    assertNoPhpErrors(response);
+    assert.deepStrictEqual(site.query('SELECT HEX(bodytext) FROM tt_content WHERE uid = 1').rows,
+      [[Buffer.from(CHARSET_PROBE, 'utf8').toString('hex').toUpperCase()]]);
     const frontend = get('index.php', { query: 'no_cache=1' });
-    assert.ok(frontend.text.includes(`<p id="charset-probe">${utf8Bytes(CHARSET_PROBE_SAVED)}</p>`), 'the frontend does not show the saved title');
+    assert.strictEqual(bodytextRendered(frontend), utf8Bytes(CHARSET_PROBE), 'the frontend does not show the saved bodytext');
     assertNoPhpErrors(frontend);
-    probeText = CHARSET_PROBE_SAVED;
+    bodytext = CHARSET_PROBE;
   });
   // And without no_cache: DataHandler cleared the page's cache.
-  frontendChecks('the frontend renders the saved title through TypoScript', get);
+  frontendChecks('the frontend renders the saved title and bodytext', get);
 
   // --- the job's "Ext.Direct, and PHP 5.6's raw-POST deprecation" step -----
 
@@ -448,12 +474,12 @@ function upload(admin, filename, content) {
     const response = callPageTree(admin, extDirectToken);
     assert.strictEqual(response.status, 200);
     assert.match(response.header('Content-Type'), /^application\/json; *charset=utf-8$/i);
-    assertPageTree(response, SITE_NAME, probeText);
+    assertPageTree(response, SITE_NAME, title);
     assertNoPhpErrors(response);
   });
 
   // The job's phases 2 and 3.
-  await checkRawPostControl(site, workRoot, `be_typo_user=${admin.cookie('be_typo_user')}`, extDirectToken, SITE_NAME, probeText);
+  await checkRawPostControl(site, workRoot, `be_typo_user=${admin.cookie('be_typo_user')}`, extDirectToken, SITE_NAME, title);
 
   // --- the job's "Behind TLS" step --------------------------------------
 
@@ -471,7 +497,7 @@ function upload(admin, filename, content) {
   check("over HTTPS, the frontend renders the page, and the backend rsaauth's login form", () => {
     const frontend = secure('');
     assert.strictEqual(frontend.status, 200);
-    assert.ok(frontend.text.includes(`<h1>${SITE_NAME}</h1>`), 'the seeded heading is missing');
+    assert.match(frontend.text, SEEDED_HEADING, 'the seeded heading is missing');
     assertNoPhpErrors(frontend);
     const form = secure('typo3/index.php');
     assert.match(form.text, /id="typo3-login-form"/);
@@ -644,10 +670,11 @@ function upload(admin, filename, content) {
   const restored = await checkRestore(site, workRoot, frontendChecks);
   check("the restored site keeps the Install Tool's two edits", () => assertEdits(restored));
   checkUploadRestored(restored);
-  check('the restored site keeps the upload in sys_file, and the saved title', () => {
+  check('the restored site keeps the upload in sys_file, and the saved title and bodytext', () => {
     assert.deepStrictEqual(restored.query("SELECT identifier FROM sys_file WHERE name = 'ci-upload.txt'").rows, [['/ci-upload.txt']]);
-    assert.deepStrictEqual(restored.query('SELECT HEX(title) FROM pages WHERE uid = 1').rows,
-      [[Buffer.from(CHARSET_PROBE_SAVED, 'utf8').toString('hex').toUpperCase()]]);
+    const probeHex = Buffer.from(CHARSET_PROBE, 'utf8').toString('hex').toUpperCase();
+    assert.deepStrictEqual(restored.query('SELECT HEX(title) FROM pages WHERE uid = 1').rows, [[probeHex]]);
+    assert.deepStrictEqual(restored.query('SELECT HEX(bodytext) FROM tt_content WHERE uid = 1').rows, [[probeHex]]);
   });
 
   finish('stack 6.2.31');

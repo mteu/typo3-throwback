@@ -5,7 +5,8 @@
  * Unlike the provision.php of 3.8, 4.0 and 4.5, this one builds no schema. 6.2's
  * own installer does that, driven by install.php, for the reasons that file's
  * docblock gives. What is left here is what the installer does not do: refuse a
- * database that is not UTF-8, and seed the root page, its template and the probe.
+ * database that is not UTF-8, and seed the root page, its content element and its
+ * template.
  *
  * Written against mysqli, because that is what 6.2 uses
  * (typo3/sysext/core/Classes/Database/DatabaseConnection.php:1190), and ext/mysql
@@ -13,7 +14,7 @@
  *
  *   php provision.php preflight   before the installer: the server and database
  *                                 must be utf8, and the database empty
- *   php provision.php seed        after it: root page, template, round trip
+ *   php provision.php seed        after it: root page, content element, template
  */
 
 function out($msg) {
@@ -42,12 +43,7 @@ if ($mode !== 'preflight' && $mode !== 'seed') {
     fail('usage: provision.php preflight|seed');
 }
 
-/**
- * 4.5's probe, unchanged and stored as UTF-8, because 6.2 is UTF-8 end to end.
- * The ø and ö are inside latin1; the ő and the Japanese are not, so they only
- * survive a database that really stores UTF-8.
- */
-$charsetProbe = 'Skaarhøj · Gödöllő · 日本語';
+$welcomeText = 'A text element, stored in tt_content and rendered by css_styled_content.';
 
 function readSingleValue(mysqli $link, $query) {
     $result = $link->query($query);
@@ -135,45 +131,49 @@ if ($cachingTables === 0) {
 // time() is frozen by libfaketime, so tstamp/crdate are identical on every run.
 $now = time();
 
+// A root page with one text element on it, rendered by css_styled_content, which
+// the installer's factory configuration loads, as a site of the time was set up.
+// The tests write their own text into both records through the record editor,
+// and read it back from the frontend.
 $stmt = $link->prepare('INSERT INTO pages (pid, tstamp, crdate, sorting, title, doktype, hidden, deleted,'
     . ' is_siteroot, perms_userid, perms_user, perms_group, perms_everybody) VALUES (0, ?, ?, 256, ?, 1, 0, 0, 1, 1, 31, 31, 31)');
-$stmt->bind_param('iis', $now, $now, $charsetProbe);
+$stmt->bind_param('iis', $now, $now, $siteName);
 $stmt->execute() or fail('creating root page: ' . $stmt->error);
 $rootPageUid = $link->insert_id;
 out('created root page (uid ' . $rootPageUid . ')');
 
-rejectUnlessUtf8('pages.title charset', readSingleValue($link,
-    "SELECT CHARACTER_SET_NAME FROM information_schema.COLUMNS"
-    . " WHERE TABLE_SCHEMA = '" . $link->real_escape_string($dbName) . "'"
-    . " AND TABLE_NAME = 'pages' AND COLUMN_NAME = 'title'"));
+$stmt = $link->prepare('INSERT INTO tt_content (pid, tstamp, crdate, sorting, CType, header, bodytext, colPos, hidden, deleted)'
+    . " VALUES (?, ?, ?, 256, 'text', ?, ?, 0, 0, 0)");
+$stmt->bind_param('iiiss', $rootPageUid, $now, $now, $siteName, $welcomeText);
+$stmt->execute() or fail('creating content element: ' . $stmt->error);
+out('created content element (uid ' . $link->insert_id . ')');
 
-$storedTitle = readSingleValue($link, 'SELECT title FROM pages WHERE uid = ' . (int) $rootPageUid);
-if ($storedTitle !== $charsetProbe) {
-    fail('the root page title did not survive the database: wrote "' . $charsetProbe
-        . '", read back "' . $storedTitle . '"');
+// The columns the record editor writes the tests' text into. One that is not
+// utf8 would store every character outside it as '?'.
+foreach (array('pages.title', 'tt_content.header', 'tt_content.bodytext') as $column) {
+    list($table, $field) = explode('.', $column);
+    rejectUnlessUtf8($column . ' charset', readSingleValue($link,
+        "SELECT CHARACTER_SET_NAME FROM information_schema.COLUMNS"
+        . " WHERE TABLE_SCHEMA = '" . $link->real_escape_string($dbName) . "'"
+        . " AND TABLE_NAME = '" . $table . "' AND COLUMN_NAME = '" . $field . "'"));
 }
-out('UTF-8 round trip through pages.title: ok');
 
 // The same template 4.5's stack seeds, so the two frontends can be compared line
-// for line. page.40 reads the title back out of the database.
+// for line: css_styled_content's own template, included as the template record's
+// "Include static (from extensions)" field stores it, renders the page's content.
 $typoScript = 'page = PAGE' . chr(10)
     . 'page.typeNum = 0' . chr(10)
-    . 'page.10 = TEXT' . chr(10)
-    . 'page.10.value = ' . $siteName . chr(10)
-    . 'page.10.wrap = <h1>|</h1>' . chr(10)
+    . 'page.10 < styles.content.get' . chr(10)
     . 'page.20 = TEXT' . chr(10)
     . 'page.20.value = Rendered by TypoScript on PHP ' . phpversion() . chr(10)
     . 'page.20.wrap = <p>|</p>' . chr(10)
     . 'page.30 = TEXT' . chr(10)
     . 'page.30.data = date:U' . chr(10)
     . 'page.30.strftime = %Y-%m-%d %H:%M:%S' . chr(10)
-    . 'page.30.wrap = <p>Page generated&nbsp;|</p>' . chr(10)
-    . 'page.40 = TEXT' . chr(10)
-    . 'page.40.data = page:title' . chr(10)
-    . 'page.40.wrap = <p id="charset-probe">|</p>' . chr(10);
+    . 'page.30.wrap = <p>Page generated&nbsp;|</p>' . chr(10);
 
-$stmt = $link->prepare('INSERT INTO sys_template (pid, tstamp, crdate, sorting, title, root, clear, config, deleted, hidden)'
-    . " VALUES (?, ?, ?, 256, 'Main template', 1, 3, ?, 0, 0)");
+$stmt = $link->prepare('INSERT INTO sys_template (pid, tstamp, crdate, sorting, title, root, clear, include_static_file, config, deleted, hidden)'
+    . " VALUES (?, ?, ?, 256, 'Main template', 1, 3, 'EXT:css_styled_content/static/', ?, 0, 0)");
 $stmt->bind_param('iiis', $rootPageUid, $now, $now, $typoScript);
 $stmt->execute() or fail('creating root template: ' . $stmt->error);
 out('created root TypoScript template');

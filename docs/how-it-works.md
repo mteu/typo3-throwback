@@ -104,8 +104,9 @@ upstream tested. The alternative was a PHP 5.3 image, which is large, unfixed si
 
 4.5 is UTF-8 end to end. It connects with `SET NAMES utf8` and names no charset on its
 tables, so a latin1 server would store every character outside latin1 as `?`, with only
-a warning. `provision.php` refuses to start on anything but UTF-8 and checks the round
-trip.
+a warning. `provision.php` refuses to start on anything but UTF-8. The CI job proves the
+round trip: it saves text outside latin1 through the record editor and reads it back
+from the database and the frontend.
 
 Redirects and some response bodies are absolute, so it needs `TYPO3_BEHIND_TLS=1`
 behind TLS. That fix makes TYPO3 believe it is on port 443 while Apache sees port 80,
@@ -122,6 +123,22 @@ The default extension list leaves out `t3skin`, the backend skin. Without it no 
 stylesheet is registered, and the backend renders as bare HTML. 4.5's own update
 wizard warns that the backend may be unusable without it. So the entrypoint enables it,
 and `provision.php` lists it with the other extensions. It has no tables of its own.
+
+## The seeded site, from 4.0 on
+
+From 4.0 on, `provision.php` seeds a root page with one text element on it, rendered
+by css_styled_content through `styles.content.get`, as a site of the time was set up.
+6.2's installer loads css_styled_content itself. 4.0 and 4.5 leave it to the Extension
+Manager, so their entrypoints add it to the extension list. It has no tables of its own.
+
+Nothing in the seed tests the character set. The CI jobs and the browser probes do
+that themselves: they save text outside latin1 into the element's bodytext, and from
+4.5 into the page title, through the record editor, then read it back from the
+database, the editor, the frontend and the page tree.
+
+That puts 4.0's `default_charset` finding on the frontend too. css_styled_content
+escapes the bodytext with `htmlspecialchars()`, so under PHP 5.6's own default, UTF-8,
+the frontend shows it blank, just as the record editor does.
 
 ## 6.2.31
 
