@@ -110,8 +110,9 @@
   button { cursor: pointer; }
   button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
   button:disabled { opacity: 0.5; cursor: default; }
+  .location { display: flex; gap: 6px; flex: 1 1 220px; min-width: 0; }
   .address {
-    flex: 1 1 220px;
+    flex: 1 1 0;
     min-width: 0;
     color: var(--muted);
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -165,8 +166,11 @@
     <button type="button" data-path="typo3/index.php" data-own-tab disabled title="Opens in a tab of its own. Keep this site open in a tab: that is where PHP runs.">Backend ↗</button>
     <button type="button" data-path="typo3/install/index.php" disabled>Install Tool</button>
   </nav>
-  <div class="address" id="address" aria-live="off"></div>
-  <button type="button" id="reset" disabled>Reset site</button>
+  <div class="location">
+    <div class="address" id="address" aria-live="off"></div>
+    <button type="button" id="reload" disabled title="Reload the page shown below"><span aria-hidden="true">↻</span> Refresh</button>
+  </div>
+  <button type="button" id="reset" disabled title="Throw away this site's database and files, and provision a fresh one"><span aria-hidden="true">💣</span> Reset</button>
   <div class="status" id="status" role="status">Starting…</div>
   <div class="logins">Backend <code>admin</code> / <code>password</code>, Install Tool <code>joh316</code></div>
   <div class="links">
@@ -197,6 +201,7 @@ const WORKER = '../wasm/php-worker.js';
   const frame = document.getElementById('site');
   const address = document.getElementById('address');
   const buttons = document.querySelectorAll('nav button');
+  const reload = document.getElementById('reload');
   const reset = document.getElementById('reset');
   const loader = document.getElementById('loader');
   const loaderText = document.getElementById('loader-text');
@@ -217,7 +222,7 @@ const WORKER = '../wasm/php-worker.js';
     bar.setAttribute('aria-valuenow', String(percent));
   };
 
-  // Framed by another site, "Reset site" and the backend could be clicked
+  // Framed by another site, "Reset" and the backend could be clicked
   // through a decoy (clickjacking). The shell has no reason to be framed.
   if (window.top !== window.self) {
     say('This page does not run inside a frame. Open it in its own tab.', true);
@@ -367,6 +372,25 @@ const WORKER = '../wasm/php-worker.js';
   const open = path => {
     frame.src = `site/${path}`;
   };
+  // A fresh GET of the page the frame shows, with this page as its referrer,
+  // which sw.js trusts. location.reload() would send a submitted form again.
+  // The fragment goes: a URL that differs from the shown one only by its
+  // fragment scrolls the frame instead of loading it.
+  const sitePath = new URL('site/', location.href).pathname;
+  const reloadFrame = () => {
+    let shown = null;
+    try {
+      shown = new URL(frame.contentWindow.location.href);
+    } catch (error) {
+      shown = null;
+    }
+    if (!shown || shown.origin !== location.origin || !shown.pathname.startsWith(sitePath)) {
+      open('');
+      return;
+    }
+    shown.hash = '';
+    frame.src = shown.href;
+  };
   // The backend takes itself for the top window. Up to 4.0 it is a frameset
   // whose frames call top.goToModule(), top.content, top.TS and more, in 39
   // files of 3.3.0 and 17 of 3.8.1. From 4.5 it is one ExtJS document whose
@@ -409,6 +433,8 @@ const WORKER = '../wasm/php-worker.js';
         }
       });
     }
+    reload.disabled = false;
+    reload.addEventListener('click', reloadFrame);
     reset.disabled = false;
     reset.addEventListener('click', () => {
       if (!confirm('Throw away this site\'s database and files, and provision a fresh one?')) {

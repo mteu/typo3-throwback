@@ -55,7 +55,7 @@ what the page hands it.
   worker of your tab, and returns its answer.
 - **Your site is saved in your browser.** After each change, the site's files,
   database and cookies are stored in the browser's own storage, and a reload
-  carries on from there. A backend login stays logged in. "Reset site" throws
+  carries on from there. A backend login stays logged in. "Reset" throws
   it away and starts fresh.
 - **One PHP for the whole browser.** Open the site in a second tab, and that tab
   uses the first tab's PHP. Close the first, and another tab takes over from
